@@ -4,6 +4,7 @@ Implement RHF equations with DIIS and other forms of optimization
 import numpy as np
 import scipy as sp
 from diis import DIIS
+from fon import FON
 
 
 class RHF:
@@ -39,6 +40,14 @@ class RHF:
         _, c = sp.linalg.eigh(fock, b=self.overlap)
         return 2 * (c[:, self.occ] @ c[:, self.occ].T)
 
+    def fon_density_from_fock(self, fock, fon_obj, temperature):
+        e, c = sp.linalg.eigh(fock, b=self.overlap)
+        n_i = fon_obj.frac_occ_rhf(temperature, e, self.nelec // 2)
+        dmat = np.zeros_like(fock)
+        for idx, nn in enumerate(n_i):
+            dmat += 2 * nn * c[:, [idx]] @ c[:, [idx]].T
+        return dmat
+
     def solve(self):
         np.set_printoptions(linewidth=300)
         iter = 0
@@ -62,6 +71,78 @@ class RHF:
             d_old = dmat.copy()
             e_old = current_e
             iter += 1
+        e, v = sp.linalg.eigh(fock, b=self.overlap)
+        self.dmat = dmat
+        self.fock = fock
+        self.mo_coeff = v
+        self.mo_energies = e
+
+    def solve_diss_fomo(self, broadening_param):
+        diis = DIIS(self.diis_length)
+        fon = FON()
+        temperature = fon.broadening_param_to_temp(broadening_param)
+        iter = 0
+        dmat = self.core_density()
+        d_old = dmat.copy()
+        e_old = np.trace(self.hcore @ dmat)
+        rmsd = 10
+        fock = self.fock_mat(dmat)
+        print("Iter\tE(elec)\tdE\tRMSD\n")
+        while iter < self.iter_max and rmsd > self.rmsd_eps:
+            fock = self.fock_mat(dmat)
+            error = fock @ dmat @ self.overlap - self.overlap @ dmat @ fock
+            fock = diis.compute_new_vec(fock, error)
+
+            dmat = self.fon_density_from_fock(fock, fon, temperature)
+            current_e = 0.5 * np.einsum('ij,ij', self.hcore + fock, dmat)
+            dE = abs(current_e - e_old)
+            rmsd = np.linalg.norm(dmat - d_old)
+
+            # print(error)
+            print("{}\t{: 5.10f}\t{: 5.5f}\t{: 5.5f}\t Temp {: 5.5f}".format(iter, current_e, dE,
+                                                            rmsd, temperature))
+            d_old = dmat.copy()
+            e_old = current_e
+            iter += 1
+
+        e, v = sp.linalg.eigh(fock, b=self.overlap)
+        self.dmat = dmat
+        self.fock = fock
+        self.mo_coeff = v
+        self.mo_energies = e
+
+
+    def solve_diis_fon(self):
+        diis = DIIS(self.diis_length)
+        fon = FON()
+        iter = 0
+        dmat = self.core_density()
+        d_old = dmat.copy()
+        e_old = np.trace(self.hcore @ dmat)
+        rmsd = 10
+        fock = self.fock_mat(dmat)
+        temperature = fon.get_start_temp(dmat, fock, self.overlap)
+        print("Iter\tE(elec)\tdE\tRMSD\n")
+        while iter < self.iter_max and rmsd > self.rmsd_eps:
+            fock = self.fock_mat(dmat)
+            error = fock @ dmat @ self.overlap - self.overlap @ dmat @ fock
+            fock = diis.compute_new_vec(fock, error)
+
+            dmat = self.fon_density_from_fock(fock, fon, temperature)
+            current_e = 0.5 * np.einsum('ij,ij', self.hcore + fock, dmat)
+            dE = abs(current_e - e_old)
+            rmsd = np.linalg.norm(dmat - d_old)
+
+            # print(error)
+            print("{}\t{: 5.10f}\t{: 5.5f}\t{: 5.5f}\t Temp {: 5.5f}".format(iter, current_e, dE,
+                                                            rmsd, temperature))
+            d_old = dmat.copy()
+            e_old = current_e
+
+            # get new temperature
+            temperature = 10_000 * sum([np.linalg.norm(xx) for xx in diis.error_vecs])
+            iter += 1
+
         e, v = sp.linalg.eigh(fock, b=self.overlap)
         self.dmat = dmat
         self.fock = fock
@@ -108,7 +189,7 @@ if __name__ == "__main__":
     mol = gto.M(
         verbose=0,
         atom='O   0.000000000000  -0.143225816552   0.000000000000;H  1.638036840407   1.136548822547  -0.000000000000; H  -1.638036840407   1.136548822547  -0.000000000000',
-        basis='sto-3g',
+        basis='6-311g*',
     )
     # mol = gto.M(
     #     verbose=0,
@@ -121,8 +202,17 @@ if __name__ == "__main__":
     eri = mol.intor('int2e', aosym='s1')  # (ij|kl)
     rhf = RHF(t + v, s, eri, mol.nelectron, iter_max=300,
               diis_length=4)
-    rhf.solve_diis()
+    rhf.solve_diss_fomo(0.5)
 
+
+    ws, vs = np.linalg.eigh(rhf.overlap)
+    snhalf = vs @ np.diag(ws**-0.5) @ vs.T
+    shalf = vs @ np.diag(ws**0.5) @ vs.T
+    # sigma, c = sp.linalg.eigh(s @ d_uhf @ s, b=s)
+    sigma, c = np.linalg.eigh(shalf @ rhf.dmat @ shalf)
+    c = snhalf @ c
+    print(sigma)
+    exit()
     print(np.trace(rhf.dmat @ rhf.overlap))
     fock = rhf.fock_mat(rhf.dmat)
     current_e = 0.5 * np.einsum('ij,ij', rhf.hcore + fock, rhf.dmat)
@@ -138,10 +228,10 @@ if __name__ == "__main__":
     mf.diis_space = 6
     mf.kernel(rho0)
     dmat = mf.make_rdm1()
-    print(mf.energy_tot())
+    print("pyscf rhf ", mf.energy_tot())
 
-    fock = rhf.fock_mat(dmat)
-    current_e = 0.5 * np.einsum('ij,ij', rhf.hcore + fock, dmat)
-    print(current_e, mf.e_tot - mol.energy_nuc())
-    print(of.general_basis_change(fock, mf.mo_coeff, (1, 0)))
+    # fock = rhf.fock_mat(dmat)
+    # current_e = 0.5 * np.einsum('ij,ij', rhf.hcore + fock, dmat)
+    # print(current_e, mf.e_tot - mol.energy_nuc())
+    # print(of.general_basis_change(fock, mf.mo_coeff, (1, 0)))
 

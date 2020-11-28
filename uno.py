@@ -12,7 +12,10 @@ def uno(uhf: UHF):
     ws, vs = np.linalg.eigh(s)
     assert np.allclose(vs @ np.diag(ws) @ vs.T, s)
     snhalf = vs @ np.diag(ws**-0.5) @ vs.T
-    sigma, c = sp.linalg.eigh(s @ d_uhf @ s, b=s)
+    shalf = vs @ np.diag(ws**0.5) @ vs.T
+    # sigma, c = sp.linalg.eigh(s @ d_uhf @ s, b=s)
+    sigma, c = np.linalg.eigh(shalf @ d_uhf @ shalf)
+    c = snhalf @ c
     print(sigma)
 
 
@@ -23,10 +26,17 @@ if __name__ == "__main__":
     np.set_printoptions(linewidth=300)
     from pyscf import gto, scf
     import openfermion as of
+    # mol = gto.M(
+    #     verbose=0,
+    #     atom='H 0 0 0; H 0 0 1; H 0 0 2; H 0 0 3; H 0 0 4',
+    #     basis='sto-3g',
+    #     charge=0,
+    #     spin=None
+    # )
     mol = gto.M(
         verbose=0,
-        atom='H 0 0 0; H 0 0 1; H 0 0 2; H 0 0 3; H 0 0 4',
-        basis='sto-3g',
+        atom='Cr 0 0 0; Cr 0 0 3.4',
+        basis='6-31g*',
         charge=0,
         spin=None
     )
@@ -36,6 +46,6 @@ if __name__ == "__main__":
     eri = mol.intor('int2e', aosym='s1')  # (ij|kl)
     uhf = UHF(t + v, s, eri, 3, 2, iter_max=300,
               diis_length=4)
-    uhf.solve_diis()
+    uhf.solve_diis_fon()
 
     uno(uhf)
