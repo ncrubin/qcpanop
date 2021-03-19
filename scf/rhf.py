@@ -186,17 +186,32 @@ if __name__ == "__main__":
     from pyscf import gto, scf
     import openfermion as of
 
-    mol = gto.M(
-        verbose=0,
-        atom='O   0.000000000000  -0.143225816552   0.000000000000;H  1.638036840407   1.136548822547  -0.000000000000; H  -1.638036840407   1.136548822547  -0.000000000000',
-        basis='6-311g*',
-    )
     # mol = gto.M(
     #     verbose=0,
-    #     atom='Li 0 0 0; H 0 0 5.0',
-    #     basis='sto-3g',
+    #     atom='O   0.000000000000  -0.143225816552   0.000000000000;H  1.638036840407   1.136548822547  -0.000000000000; H  -1.638036840407   1.136548822547  -0.000000000000',
+    #     basis='6-311g*',
     # )
+    mol = gto.M(
+        verbose=0,
+        atom='Li 0 0 0; H 0 0 5.0',
+        basis='sto-3g',
+    )
     s = mol.intor('int1e_ovlp')
+
+    w, v = np.linalg.eigh(s)
+    assert np.allclose(v @ np.diag(w) @ v.T, s)
+    assert np.allclose(v.T @ s @ v, np.diag(w))
+    print(w)
+    print(np.float_power(w, -0.5))
+    print(np.reciprocal(np.sqrt(w)))
+
+    s_gen = sp.linalg.logm(s)
+    s_half = sp.linalg.expm(-0.5 * s_gen)
+    print(s_half)
+    print(v @ np.diag(np.reciprocal(np.sqrt(w))) @ v.T)
+    assert np.allclose(s_half, v @ np.diag(np.reciprocal(np.sqrt(w))) @ v.T)
+
+    exit()
     t = mol.intor('int1e_kin')
     v = mol.intor('int1e_nuc')
     eri = mol.intor('int2e', aosym='s1')  # (ij|kl)
