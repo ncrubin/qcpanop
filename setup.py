@@ -9,7 +9,7 @@ from setuptools import setup, find_packages
 
 
 def version_number(path: str) -> str:
-    """Get the FQE version number from the src directory
+    """Get qcpanop's version number from the src directory
     """
     exp = r'__version__[ ]*=[ ]*["|\']([\d]+\.[\d]+\.[\d]+[\.dev[\d]*]?)["|\']'
     version_re = re.compile(exp)
@@ -22,9 +22,8 @@ def version_number(path: str) -> str:
 
 def main() -> None:
     """
-    Perform the necessary tasks to install the Fermionic Quantum Emulator
     """
-    version_path = './qcpanop/_version.py'
+    version_path = 'qcpanop/_version.py'
 
     __version__ = version_number(version_path)
 
@@ -46,12 +45,11 @@ def main() -> None:
         version=__version__,
         author='Nicholas C. Rubin',
         author_email='rubinnc0@gmail.com',
-        description='QCPANOP: A panoply of quantum chemistry codes for the autodidact in all of us.',
+        description='Learning tools and basics for quantum chemistry',
         long_description=long_description,
-        install_requires=requirements,
+        install_requires=None,
         license='Apache 2',
-        packages=find_packages(where='qcpanop'),
-        package_dir={'': 'qcpanop'}
+        packages=find_packages(),
         )
 
 

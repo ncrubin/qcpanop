@@ -5,11 +5,11 @@ TODO: vectorize further with numpy.  current form is to compare with other codes
 """
 from itertools import product
 import numpy as np
-from openfermionpsi4 import run_psi4
 import openfermion as of
 
 
 def get_h2o():
+    from openfermionpsi4 import run_psi4
     geometry = [['O', [0.000000000000, 0.000000000000, -0.068516219320]],
                 ['H', [0.000000000000, -0.790689573744, 0.543701060715]],
                 ['H', [0.000000000000, 0.790689573744, 0.543701060715]]]

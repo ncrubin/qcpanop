@@ -186,67 +186,29 @@ if __name__ == "__main__":
     from pyscf import gto, scf
     import openfermion as of
 
-    # mol = gto.M(
-    #     verbose=0,
-    #     atom='O   0.000000000000  -0.143225816552   0.000000000000;H  1.638036840407   1.136548822547  -0.000000000000; H  -1.638036840407   1.136548822547  -0.000000000000',
-    #     basis='6-311g*',
-    # )
     mol = gto.M(
         verbose=0,
-        atom='Li 0 0 0; H 0 0 5.0',
-        basis='sto-3g',
+        atom='O   0.000000000000  -0.143225816552   0.000000000000;H  1.638036840407   1.136548822547  -0.000000000000; H  -1.638036840407   1.136548822547  -0.000000000000',
+        basis='6-311g'
     )
+    # mol = gto.M(
+    #     verbose=0,
+    #     atom='Li 0 0 0; H 0 0 5.0',
+    #     basis='sto-3g',
+    # )
     s = mol.intor('int1e_ovlp')
 
-    w, v = np.linalg.eigh(s)
-    assert np.allclose(v @ np.diag(w) @ v.T, s)
-    assert np.allclose(v.T @ s @ v, np.diag(w))
-    print(w)
-    print(np.float_power(w, -0.5))
-    print(np.reciprocal(np.sqrt(w)))
-
-    s_gen = sp.linalg.logm(s)
-    s_half = sp.linalg.expm(-0.5 * s_gen)
-    print(s_half)
-    print(v @ np.diag(np.reciprocal(np.sqrt(w))) @ v.T)
-    assert np.allclose(s_half, v @ np.diag(np.reciprocal(np.sqrt(w))) @ v.T)
-
-    exit()
     t = mol.intor('int1e_kin')
     v = mol.intor('int1e_nuc')
     eri = mol.intor('int2e', aosym='s1')  # (ij|kl)
-    rhf = RHF(t + v, s, eri, mol.nelectron, iter_max=300,
-              diis_length=4)
-    rhf.solve_diss_fomo(0.5)
-
-
-    ws, vs = np.linalg.eigh(rhf.overlap)
-    snhalf = vs @ np.diag(ws**-0.5) @ vs.T
-    shalf = vs @ np.diag(ws**0.5) @ vs.T
-    # sigma, c = sp.linalg.eigh(s @ d_uhf @ s, b=s)
-    sigma, c = np.linalg.eigh(shalf @ rhf.dmat @ shalf)
-    c = snhalf @ c
-    print(sigma)
-    exit()
-    print(np.trace(rhf.dmat @ rhf.overlap))
-    fock = rhf.fock_mat(rhf.dmat)
-    current_e = 0.5 * np.einsum('ij,ij', rhf.hcore + fock, rhf.dmat)
-    print(current_e + mol.energy_nuc())
-
-    print(rhf.mo_energies)
-
-    # of_eri = eri.transpose(0, 2, 3, 1)
-    # of.general_basis_change(of_eri, )
+    rhf = RHF(t + v, s, eri, mol.nelectron, iter_max=500,
+              diis_length=6)
+    rhf.solve_diis()
 
     rho0 = rhf.core_density()
     mf = scf.RHF(mol)
     mf.diis_space = 6
     mf.kernel(rho0)
     dmat = mf.make_rdm1()
-    print("pyscf rhf ", mf.energy_tot())
-
-    # fock = rhf.fock_mat(dmat)
-    # current_e = 0.5 * np.einsum('ij,ij', rhf.hcore + fock, dmat)
-    # print(current_e, mf.e_tot - mol.energy_nuc())
-    # print(of.general_basis_change(fock, mf.mo_coeff, (1, 0)))
+    print("pyscf rhf ", mf.energy_tot() - mol.energy_nuc())
 
