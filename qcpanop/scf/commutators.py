@@ -3,17 +3,17 @@ import numpy as np
 
 def k2_rotgen_grad_one_body(h1, p, q, opdm):
     """
-    [h_{pq}, pq]
+    spin orbital representation
+
+    <psi|[h_{pq}, pq]|psi>
+
+    :param h1: spin-orbital 1-electron integrals
+    :param p: spin-orbital index for p^q - q^p operator
+    :param q: spin-orbital index for p^q - q^p operator
+    :param opdm: spin-orbital opdm ordered alpha,beta,alpha,beta....
+                 OpenFermion ordering.
     """
     expectation = 0.
-    # #  (   1.00000) h1(p,a) cre(q) des(a)
-    # #  (   1.00000) h1(a,p) cre(a) des(q)
-    # expectation += np.dot(h1[p, :], opdm[q, :]) + np.dot(h1[:, p], opdm[:, q])
-    # #  (  -1.00000) h1(q,a) cre(p) des(a)
-    # #  (  -1.00000) h1(a,q) cre(a) des(p)
-    # expectation -= np.dot(h1[q, :], opdm[p, :]) + np.dot(h1[:, q], opdm[:, p])
-    # return expectation
-
     #  (   1.00000) h1(p,a) cre(q) des(a)
     expectation += 1.0 * np.einsum('a,a', h1[p, :], opdm[q, :])
     #  (   1.00000) h1(a,p) cre(a) des(q)
@@ -30,9 +30,16 @@ def k2_rotgen_grad(k2, p, q, tpdm):
     k2-tensor such such that the following terms correspond
 
     k2[p, q, s, r] p^ q^ r s
+    sum_{pqrs}k2_{pqsr}[p^q^ r s, m^ n]
 
     This can probably sped up with blas call to vector dot on reshaped and
     flattened k2 and tpdm
+
+    :param k2: reduced Hamiltonian in OpenFermion ordering. k2 shoudl be
+               antisymmetric in pq and rs indices.
+    :param p: spin-orbital index for p^q - q^p operator
+    :param q: spin-orbital index for p^q - q^p operator
+    :param tpdm: spin-orbital tpdm in OpenFermion ordering
     """
     expectation = 0.
     #  (  -2.00000) k2(p,a,b,c) cre(q) cre(a) des(b) des(c)
@@ -51,6 +58,14 @@ def k2_rotgen_hessian(k2, p, q, r, s, tpdm):
     <| [[k2, p^ q - q^ p], r^s - s^r]|>
 
     This can be sped up with a dgemm call through numpy
+
+    :param k2: reduced Hamiltonian in OpenFermion ordering. k2 shoudl be
+               antisymmetric in pq and rs indices.
+    :param p: spin-orbital index for p^q - q^p operator
+    :param q: spin-orbital index for p^q - q^p operator
+    :param p: spin-orbital index for r^s - s^r operator
+    :param q: spin-orbital index for r^s - s^r operator
+    :param tpdm: spin-orbital tpdm in OpenFermion ordering
     """
     expectation = 0.
     #  (  -2.00000) k2(p,r,a,b) cre(q) cre(s) des(a) des(b)
@@ -121,6 +136,19 @@ def k2_rotgen_hessian(k2, p, q, r, s, tpdm):
 
 
 def k2_rotgen_hess_one_body(h1, p, q, r, s, opdm):
+    """
+    <| [[h1, p^ q - q^ p], r^s - s^r]|>
+
+    This can be sped up with a dgemm call through numpy
+
+    :param k2: reduced Hamiltonian in OpenFermion ordering. k2 shoudl be
+               antisymmetric in pq and rs indices.
+    :param p: spin-orbital index for p^q - q^p operator
+    :param q: spin-orbital index for p^q - q^p operator
+    :param p: spin-orbital index for r^s - s^r operator
+    :param q: spin-orbital index for r^s - s^r operator
+    :param tpdm: spin-orbital tpdm in OpenFermion ordering
+    """
     expectation = 0.
     #  (   1.00000) h1(p,r) cre(q) des(s)
     expectation += 1.0 * opdm[q, s] * h1[p, r]
@@ -168,6 +196,11 @@ def k2_rotgen_hess_one_body(h1, p, q, r, s, opdm):
 
 def spinless_rotgrad_onebody(h1, p, q, sopdm):
     """
+    Use spin-summed 1-RDM to get gradient with respect to the 1-body operartor
+
+    h1 = \sum_{\sigma,mn}h_{mn}a_{m\sigma}^{\dagger}a_{n\sigma}
+
+    <psi|[h1, E_{pq}]|psi>
 
     :param h1: one-electron integrals
     :param p: spatial index of E_{pq} - E_{qp}
@@ -179,30 +212,17 @@ def spinless_rotgrad_onebody(h1, p, q, sopdm):
     expectation -= np.dot(h1[q, :], sopdm[p, :])
     expectation -= np.dot(h1[:, q], sopdm[:, p])
     expectation += np.dot(h1[p, :], sopdm[q, :])
-
-    # Contraction from NCR's code
-    expectation2 = 0.
-    #   1.00000 h1(m, n) E(m,q) d(p,n)
-    #   1.00000 h1(m, p) E(m,q)
-    expectation2 += np.einsum('m,m', h1[:, p], sopdm[:, q])
-
-    #  -1.00000 h1(m, n) E(p,n) d(m,q)
-    #  -1.00000 h1(q, n) E(p,n)
-    expectation2 -= np.einsum('n,n', h1[q, :], sopdm[p, :])
-
-    #  -1.00000 h1(m, n) E(m,p) d(q,n)
-    #  -1.00000 h1(m, q) E(m,p)
-    expectation2 -= np.einsum('m,m', h1[:, q], sopdm[:, p])
-
-    #   1.00000 h1(m, n) E(q,n) d(m,p)
-    #   1.00000 h1(p, n) E(q,n)
-    expectation2 += np.einsum('n,n', h1[p, :], sopdm[q, :])
-    assert np.isclose(expectation2, expectation)
     return expectation
 
 
 def spinless_rothess_onebody(h1, p, q, r, s, sopdm):
     """
+    Use spin-summed 1-RDM to get hessian with respect to the 1-body operartor
+
+    h1 = \sum_{\sigma,mn}h_{mn}a_{m\sigma}^{\dagger}a_{n\sigma}
+
+    <psi|[[h1, E_{pq}], E_{rs}]|psi>
+
     TODO:
 
     This can be simplified to save half the number of vec-vec products
@@ -249,88 +269,21 @@ def spinless_rothess_onebody(h1, p, q, r, s, sopdm):
         expectation += np.dot(h1[p, :], sopdm[s, :])
     expectation -= h1[p, s] * sopdm[q, r]
 
-
-    # Auto Generated from NCR's tools.
-    expectation2 = 0.
-    #   1.00000 h1(m, p) E(m,s) d(r,q)
-    #   1.00000 h1(m, p) E(m,s)
-    if q == r:
-        expectation2 += np.einsum('m,m', h1[:, p], sopdm[:, s])
-
-    #  -1.00000 h1(m, p) E(r,q) d(m,s)
-    #  -1.00000 h1(s, p) E(r,q)
-    expectation2 += -1.00000 * h1[s, p] * sopdm[r, q]
-
-    #  -1.00000 h1(m, p) E(m,r) d(s,q)
-    #  -1.00000 h1(m, p) E(m,r)
-    if q == s:
-        expectation2 -= np.einsum('m,m', h1[:, p], sopdm[:, r])
-
-    #   1.00000 h1(m, p) E(s,q) d(m,r)
-    #   1.00000 h1(r, p) E(s,q)
-    expectation2 += 1.00000 * h1[r, p] * sopdm[s, q]
-
-    #  -1.00000 h1(q, n) E(p,s) d(r,n)
-    #  -1.00000 h1(q, r) E(p,s)
-    expectation2 += -1.00000 * h1[q, r] * sopdm[p, s]
-
-    #   1.00000 h1(q, n) E(r,n) d(p,s)
-    #   1.00000 h1(q, n) E(r,n)
-    if s == p:
-        expectation2 += np.einsum('n,n', h1[q, :], sopdm[r, :])
-
-    #   1.00000 h1(q, n) E(p,r) d(s,n)
-    #   1.00000 h1(q, s) E(p,r)
-    expectation2 += 1.00000 * h1[q, s] * sopdm[p, r]
-
-    #  -1.00000 h1(q, n) E(s,n) d(p,r)
-    #  -1.00000 h1(q, n) E(s,n)
-    if r == p:
-        expectation2 -= np.einsum('n,n', h1[q, :], sopdm[s, :])
-
-    #  -1.00000 h1(m, q) E(m,s) d(r,p)
-    #  -1.00000 h1(m, q) E(m,s)
-    if p == r:
-        expectation2 -= np.einsum('m,m', h1[:, q], sopdm[:, s])
-
-    #   1.00000 h1(m, q) E(r,p) d(m,s)
-    #   1.00000 h1(s, q) E(r,p)
-    expectation2 += 1.00000 * h1[s, q] * sopdm[r, p]
-
-    #   1.00000 h1(m, q) E(m,r) d(s,p)
-    #   1.00000 h1(m, q) E(m,r)
-    if p == s:
-        expectation2 += np.einsum('m,m', h1[:, q], sopdm[:, r])
-
-    #  -1.00000 h1(m, q) E(s,p) d(m,r)
-    #  -1.00000 h1(r, q) E(s,p)
-    expectation2 += -1.00000 * h1[r, q] * sopdm[s, p]
-
-    #   1.00000 h1(p, n) E(q,s) d(r,n)
-    #   1.00000 h1(p, r) E(q,s)
-    expectation2 += 1.00000 * h1[p, r] * sopdm[q, s]
-
-    #  -1.00000 h1(p, n) E(r,n) d(q,s)
-    #  -1.00000 h1(p, n) E(r,n)
-    if s == q:
-        expectation2 -= np.einsum('n,n', h1[p, :], sopdm[r, :])
-
-    #  -1.00000 h1(p, n) E(q,r) d(s,n)
-    #  -1.00000 h1(p, s) E(q,r)
-    expectation2 += -1.00000 * h1[p, s] * sopdm[q, r]
-
-    #   1.00000 h1(p, n) E(s,n) d(q,r)
-    #   1.00000 h1(p, n) E(s,n)
-    if r == q:
-        expectation2 += np.einsum('n,n', h1[p, :], sopdm[s, :])
-
-    assert np.isclose(expectation2, expectation)
     return expectation
 
 
 def spinless_rotgrad_twobody(v2, m, n, stpdm):
     """
-    [v2e_{pqrs}, E_{mn} -E_{nm}]
+    Use spin-summed 2-RDM to get gradient with respect to the 2-body operator
+
+    spin-summed 2-RDM
+
+    e^{pq}_{rs} = \sum_{\sigma,\tau} <a_{p\sigma}^ a_{q\tau}^ a_{s\tau}a_{r\simga}>
+
+    v2 = \sum_{\sigma,\tau,pqrs}V_{pqrs}a_{p\sigma}^ a_{q\tau}^ a_{s\tau}a_{r\simga}
+
+    <psi|[v2, E_{mn}]|psi>
+
     :param v2: two-electron spatial integrals <1'2'|21>
     :param p: spatial index of E_{pq} - E_{qp}
     :param q: spatial index of E_{pq} - E_{qp}
@@ -349,48 +302,23 @@ def spinless_rotgrad_twobody(v2, m, n, stpdm):
     expectation += np.einsum('pqr,pqr', v2[:, :, :, m], stpdm[:, :, :, n])
     expectation -= np.einsum('pqr,pqr', v2[:, :, :, n], stpdm[:, :, :, m])
 
-    # Contract from NCR's code
-    expectation2 = 0.
-    #  -1.00000 v2(p, q, r, s) d(p,n) e(m,q,r,s)
-    #  -1.00000 v2(n, q, r, s) e(m,q,r,s)
-    expectation2 -= np.einsum('qrs,qrs', v2[n, :, :, :], stpdm[m, :, :, :])
-
-    #   1.00000 v2(p, q, r, s) d(m,q) e(p,n,r,s)
-    #   1.00000 v2(p, m, r, s) e(p,n,r,s)
-    expectation2 += np.einsum('prs,prs', v2[:, m, :, :], stpdm[:, n, :, :])
-
-    #  -1.00000 v2(p, q, r, s) d(r,n) e(p,q,m,s)
-    #  -1.00000 v2(p, q, n, s) e(p,q,m,s)
-    expectation2 -= np.einsum('pqs,pqs', v2[:, :, n, :], stpdm[:, :, m, :])
-
-    #   1.00000 v2(p, q, r, s) d(m,s) e(p,q,r,n)
-    #   1.00000 v2(p, q, r, m) e(p,q,r,n)
-    expectation2 += np.einsum('pqr,pqr', v2[:, :, :, m], stpdm[:, :, :, n])
-
-    #   1.00000 v2(p, q, r, s) d(p,m) e(n,q,r,s)
-    #   1.00000 v2(m, q, r, s) e(n,q,r,s)
-    expectation2 += np.einsum('qrs,qrs', v2[m, :, :, :], stpdm[n, :, :, :])
-
-    #  -1.00000 v2(p, q, r, s) d(n,q) e(p,m,r,s)
-    #  -1.00000 v2(p, n, r, s) e(p,m,r,s)
-    expectation2 -= np.einsum('prs,prs', v2[:, n, :, :], stpdm[:, m, :, :])
-
-    #   1.00000 v2(p, q, r, s) d(r,m) e(p,q,n,s)
-    #   1.00000 v2(p, q, m, s) e(p,q,n,s)
-    expectation2 += np.einsum('pqs,pqs', v2[:, :, m, :], stpdm[:, :, n, :])
-
-    #  -1.00000 v2(p, q, r, s) d(n,s) e(p,q,r,m)
-    #  -1.00000 v2(p, q, r, n) e(p,q,r,m)
-    expectation2 -= np.einsum('pqr,pqr', v2[:, :, :, n], stpdm[:, :, :, m])
-
-    assert np.isclose(expectation2, expectation)
-
     return expectation
 
 
 def spinless_rothess_twobody(v2, m, n, t, u, stpdm):
     """
     spinless-hessian two-body terms
+
+    Use spin-summed 2-RDM to get gradient with respect to the 2-body operator
+
+    spin-summed 2-RDM
+
+    e^{pq}_{rs} = \sum_{\sigma,\tau} <a_{p\sigma}^ a_{q\tau}^ a_{s\tau}a_{r\simga}>
+
+    v2 = \sum_{\sigma,\tau,pqrs}V_{pqrs}a_{p\sigma}^ a_{q\tau}^ a_{s\tau}a_{r\simga}
+
+    <psi|[[v2, E_{mn}], E_{tu}|psi>
+
     """
     expectation = 0.
     #   1.00000 v2(n, q, r, s) d(m,u) e(t,q,r,s)
