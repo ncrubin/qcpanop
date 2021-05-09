@@ -1,17 +1,5 @@
 """
-Gradient based orbital optimizations from the perspective of
-
-exp(kappa)
-kappa = k_{p<q}(p^q - q^p)
-
-1) Gradient only where we provide just the gradient with respect to the
-   orbital rotation parameters.  This saves us from having to re-rotate
-   our basis at every step of the algorithm.  The cost is now in computing
-   the gradient with the 1-RDM and 2-RDM provided.  Graident cost is now
-
-
-2) A Newton type method where we calculate the gradient and hessian
-   around kappa = 0.
+Testing out orbital optimization for complex orbitals, complex integrals
 """
 from typing import List, Tuple, Dict, Optional, Union
 
@@ -46,7 +34,9 @@ from qcpanop.scf.commutators import (k2_rotgen_grad, k2_rotgen_hessian,
                                      spinless_rotgrad_twobody,
                                      spinless_rotgrad_onebody,
                                      spinless_rothess_onebody,
-                                     spinless_rothess_twobody)
+                                     spinless_rothess_twobody,
+                                     k2_rotgen_grad_nosymm,
+                                     k2_rotgen_hess_nosymm)
 
 
 class Stepper:
@@ -274,7 +264,7 @@ def oo_so_sep(obi: np.ndarray, tbi: np.ndarray,
                              k2_rotgen_grad_one_body(h1_tensor, 2 * v + 1,
                                                      2 * o + 1, opdm)
             test_comm_grad_val = k2_rotgen_grad(k2_tensor, 2 * v, 2 * o, tpdm) + \
-                            k2_rotgen_grad(k2_tensor, 2 * v + 1, 2 * o + 1, tpdm)
+                                 k2_rotgen_grad(k2_tensor, 2 * v + 1, 2 * o + 1, tpdm)
             assert np.isclose(test_comm_grad_val, comm_grad_val)
             comm_grad[idx] = comm_grad_val
 
@@ -357,9 +347,10 @@ def spatial_oo(oei: np.ndarray, tei: np.ndarray, sopdm: np.ndarray,
     moleham = of.InteractionOperator(0, soei, 0.25 * astei)
     redham = of.make_reduced_hamiltonian(moleham, n_electrons=4)
 
-    topdm = of.map_two_pdm_to_one_pdm(tpdm, 4)
-    assert np.allclose(topdm, opdm)
-    assert np.allclose(sopdm, opdm[::2, ::2] + opdm[1::2, 1::2])
+    if opdm is not None and tpdm is not None:
+        topdm = of.map_two_pdm_to_one_pdm(tpdm, 4)
+        assert np.allclose(topdm, opdm)
+        assert np.allclose(sopdm, opdm[::2, ::2] + opdm[1::2, 1::2])
 
     stepper = Stepper(method)
 
@@ -403,8 +394,25 @@ def spatial_oo(oei: np.ndarray, tei: np.ndarray, sopdm: np.ndarray,
                     hess_val += spinless_rothess_onebody(oei, v1, o1, v2, o2, sopdm)
                     hess_val += spinless_rothess_onebody(oei, v2, o2, v1, o1, sopdm)
 
+                    test_hess_val = 0 + 1j * 0
+                    for sigma, tau in product(range(2), repeat=2):
+                        test_hess_val += k2_rotgen_hess_nosymm(k2_tensor,
+                                                               2 * v1 + sigma,
+                                                               2 * o1 + sigma,
+                                                               2 * v2 + tau,
+                                                               2 * o2 + tau,
+                                                               tpdm)
+                        test_hess_val += k2_rotgen_hess_nosymm(k2_tensor,
+                                                               2 * v2 + sigma,
+                                                               2 * o2 + sigma,
+                                                               2 * v1 + tau,
+                                                               2 * o1 + tau,
+                                                               tpdm)
+
                     comm_hess[idx, jdx] = 0.5 * hess_val
                     comm_hess[jdx, idx] = 0.5 * hess_val
+
+                    assert np.isclose(hess_val, test_hess_val)
 
         assert np.allclose(comm_hess, comm_hess.T)
 
@@ -443,7 +451,7 @@ def load_hydrogen_fluoride_molecule(bd):
     multiplicity = 1
     molecule = of.MolecularData(geometry, basis, multiplicity)
     molecule = run_pyscf(molecule, run_scf=True)# , run_fci=True, run_cisd=True,
-                         # run_mp2=True)
+    # run_mp2=True)
     molecule.filename = os.path.join(os.getcwd(), molecule.name)
     # # molecule.save()
     # molecule.load()
@@ -475,6 +483,7 @@ def main():
     Hcore = pyscf_scf.get_hcore()
     # Rotate back to AO basis
     ao_eri = pyscf_molecule.intor('int2e', aosym='s1')  # (ij|kl)
+
     _, X = sp.linalg.eigh(Hcore, S)
     obi = of.general_basis_change(Hcore, X, (1, 0))
     tbi = np.einsum('psqr', of.general_basis_change(ao_eri, X, (1, 0, 1, 0)))
@@ -487,7 +496,7 @@ def main():
 
     sopdm = opdm[::2, ::2] + opdm[1::2, 1::2]
     stpdm = tpdm[::2, ::2, ::2, ::2] + tpdm[1::2, 1::2, 1::2, 1::2] + \
-             tpdm[::2, 1::2, 1::2, ::2] + tpdm[1::2, ::2, ::2, 1::2]
+            tpdm[::2, 1::2, 1::2, ::2] + tpdm[1::2, ::2, ::2, 1::2]
 
     # sopdm = hf_opdm[::2, ::2] + hf_opdm[1::2, 1::2]
     # stpdm = hf_tpdm[::2, ::2, ::2, ::2] + hf_tpdm[1::2, 1::2, 1::2, 1::2] + \

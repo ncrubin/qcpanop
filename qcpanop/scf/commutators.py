@@ -1,6 +1,204 @@
 import numpy as np
 
 
+def k2_rotgen_grad_nosymm(k2, p, q, tpdm):
+    """
+    No symmetry is considered on k2 or the tpdm.
+
+    This is for testing the spin-summed complex version
+    :param k2:
+    :param p:
+    :param q:
+    :param tpdm:
+    :return:
+    """
+    expectation = 0. + 1j * 0
+    #  (  -1.00000) k2(p,a,b,c) cre(q) cre(a) des(b) des(c)
+    expectation += -1.0 * np.einsum('abc,abc', k2[p, :, :, :], tpdm[q, :, :, :])
+    #  (   1.00000) k2(q,a,b,c) cre(p) cre(a) des(b) des(c)
+    expectation += 1.0 * np.einsum('abc,abc', k2[q, :, :, :], tpdm[p, :, :, :])
+    #  (   1.00000) k2(a,p,b,c) cre(q) cre(a) des(b) des(c)
+    expectation += 1.0 * np.einsum('abc,abc', k2[:, p, :, :], tpdm[q, :, :, :])
+    #  (  -1.00000) k2(a,q,b,c) cre(p) cre(a) des(b) des(c)
+    expectation += -1.0 * np.einsum('abc,abc', k2[:, q, :, :], tpdm[p, :, :, :])
+    #  (  -1.00000) k2(a,b,p,c) cre(a) cre(b) des(q) des(c)
+    expectation += -1.0 * np.einsum('abc,abc', k2[:, :, p, :], tpdm[:, :, q, :])
+    #  (   1.00000) k2(a,b,q,c) cre(a) cre(b) des(p) des(c)
+    expectation += 1.0 * np.einsum('abc,abc', k2[:, :, q, :], tpdm[:, :, p, :])
+    #  (   1.00000) k2(a,b,c,p) cre(a) cre(b) des(q) des(c)
+    expectation += 1.0 * np.einsum('abc,abc', k2[:, :, :, p], tpdm[:, :, q, :])
+    #  (  -1.00000) k2(a,b,c,q) cre(a) cre(b) des(p) des(c)
+    expectation += -1.0 * np.einsum('abc,abc', k2[:, :, :, q], tpdm[:, :, p, :])
+    return expectation
+
+
+def k2_rotgen_hess_nosymm(k2, p, q, r, s, tpdm):
+    """
+    No symmetry is considered in k2 or tpdm
+    """
+    expectation = 0. + 1j * 0.
+    #  (  -1.00000) k2(p,r,a,b) cre(q) cre(s) des(a) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[p, r, :, :], tpdm[q, s, :, :])
+    #  (   1.00000) k2(p,s,a,b) cre(q) cre(r) des(a) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[p, s, :, :], tpdm[q, r, :, :])
+    #  (  -1.00000) k2(p,a,r,b) cre(q) cre(a) des(s) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[p, :, r, :], tpdm[q, :, s, :])
+    #  (   1.00000) k2(p,a,s,b) cre(q) cre(a) des(r) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[p, :, s, :], tpdm[q, :, r, :])
+    #  (   1.00000) k2(p,a,b,r) cre(q) cre(a) des(s) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[p, :, :, r], tpdm[q, :, s, :])
+    #  (  -1.00000) k2(p,a,b,s) cre(q) cre(a) des(r) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[p, :, :, s], tpdm[q, :, r, :])
+    #  (   1.00000) k2(q,r,a,b) cre(p) cre(s) des(a) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[q, r, :, :], tpdm[p, s, :, :])
+    #  (  -1.00000) k2(q,s,a,b) cre(p) cre(r) des(a) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[q, s, :, :], tpdm[p, r, :, :])
+    #  (   1.00000) k2(q,a,r,b) cre(p) cre(a) des(s) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[q, :, r, :], tpdm[p, :, s, :])
+    #  (  -1.00000) k2(q,a,s,b) cre(p) cre(a) des(r) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[q, :, s, :], tpdm[p, :, r, :])
+    #  (  -1.00000) k2(q,a,b,r) cre(p) cre(a) des(s) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[q, :, :, r], tpdm[p, :, s, :])
+    #  (   1.00000) k2(q,a,b,s) cre(p) cre(a) des(r) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[q, :, :, s], tpdm[p, :, r, :])
+    #  (   1.00000) k2(r,p,a,b) cre(q) cre(s) des(a) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[r, p, :, :], tpdm[q, s, :, :])
+    #  (  -1.00000) k2(r,q,a,b) cre(p) cre(s) des(a) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[r, q, :, :], tpdm[p, s, :, :])
+    #  (  -1.00000) k2(r,a,p,b) cre(s) cre(a) des(q) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[r, :, p, :], tpdm[s, :, q, :])
+    #  (   1.00000) k2(r,a,q,b) cre(s) cre(a) des(p) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[r, :, q, :], tpdm[s, :, p, :])
+    #  (   1.00000) k2(r,a,b,p) cre(s) cre(a) des(q) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[r, :, :, p], tpdm[s, :, q, :])
+    #  (  -1.00000) k2(r,a,b,q) cre(s) cre(a) des(p) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[r, :, :, q], tpdm[s, :, p, :])
+    #  (  -1.00000) k2(s,p,a,b) cre(q) cre(r) des(a) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[s, p, :, :], tpdm[q, r, :, :])
+    #  (   1.00000) k2(s,q,a,b) cre(p) cre(r) des(a) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[s, q, :, :], tpdm[p, r, :, :])
+    #  (   1.00000) k2(s,a,p,b) cre(r) cre(a) des(q) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[s, :, p, :], tpdm[r, :, q, :])
+    #  (  -1.00000) k2(s,a,q,b) cre(r) cre(a) des(p) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[s, :, q, :], tpdm[r, :, p, :])
+    #  (  -1.00000) k2(s,a,b,p) cre(r) cre(a) des(q) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[s, :, :, p], tpdm[r, :, q, :])
+    #  (   1.00000) k2(s,a,b,q) cre(r) cre(a) des(p) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[s, :, :, q], tpdm[r, :, p, :])
+    #  (   1.00000) k2(a,p,r,b) cre(q) cre(a) des(s) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, p, r, :], tpdm[q, :, s, :])
+    #  (  -1.00000) k2(a,p,s,b) cre(q) cre(a) des(r) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, p, s, :], tpdm[q, :, r, :])
+    #  (  -1.00000) k2(a,p,b,r) cre(q) cre(a) des(s) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, p, :, r], tpdm[q, :, s, :])
+    #  (   1.00000) k2(a,p,b,s) cre(q) cre(a) des(r) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, p, :, s], tpdm[q, :, r, :])
+    #  (  -1.00000) k2(a,q,r,b) cre(p) cre(a) des(s) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, q, r, :], tpdm[p, :, s, :])
+    #  (   1.00000) k2(a,q,s,b) cre(p) cre(a) des(r) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, q, s, :], tpdm[p, :, r, :])
+    #  (   1.00000) k2(a,q,b,r) cre(p) cre(a) des(s) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, q, :, r], tpdm[p, :, s, :])
+    #  (  -1.00000) k2(a,q,b,s) cre(p) cre(a) des(r) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, q, :, s], tpdm[p, :, r, :])
+    #  (   1.00000) k2(a,r,p,b) cre(s) cre(a) des(q) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, r, p, :], tpdm[s, :, q, :])
+    #  (  -1.00000) k2(a,r,q,b) cre(s) cre(a) des(p) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, r, q, :], tpdm[s, :, p, :])
+    #  (  -1.00000) k2(a,r,b,p) cre(s) cre(a) des(q) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, r, :, p], tpdm[s, :, q, :])
+    #  (   1.00000) k2(a,r,b,q) cre(s) cre(a) des(p) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, r, :, q], tpdm[s, :, p, :])
+    #  (  -1.00000) k2(a,s,p,b) cre(r) cre(a) des(q) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, s, p, :], tpdm[r, :, q, :])
+    #  (   1.00000) k2(a,s,q,b) cre(r) cre(a) des(p) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, s, q, :], tpdm[r, :, p, :])
+    #  (   1.00000) k2(a,s,b,p) cre(r) cre(a) des(q) des(b)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, s, :, p], tpdm[r, :, q, :])
+    #  (  -1.00000) k2(a,s,b,q) cre(r) cre(a) des(p) des(b)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, s, :, q], tpdm[r, :, p, :])
+    #  (  -1.00000) k2(a,b,p,r) cre(a) cre(b) des(q) des(s)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, :, p, r], tpdm[:, :, q, s])
+    #  (   1.00000) k2(a,b,p,s) cre(a) cre(b) des(q) des(r)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, :, p, s], tpdm[:, :, q, r])
+    #  (   1.00000) k2(a,b,q,r) cre(a) cre(b) des(p) des(s)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, :, q, r], tpdm[:, :, p, s])
+    #  (  -1.00000) k2(a,b,q,s) cre(a) cre(b) des(p) des(r)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, :, q, s], tpdm[:, :, p, r])
+    #  (   1.00000) k2(a,b,r,p) cre(a) cre(b) des(q) des(s)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, :, r, p], tpdm[:, :, q, s])
+    #  (  -1.00000) k2(a,b,r,q) cre(a) cre(b) des(p) des(s)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, :, r, q], tpdm[:, :, p, s])
+    #  (  -1.00000) k2(a,b,s,p) cre(a) cre(b) des(q) des(r)
+    expectation += -1.0 * np.einsum('ab,ab', k2[:, :, s, p], tpdm[:, :, q, r])
+    #  (   1.00000) k2(a,b,s,q) cre(a) cre(b) des(p) des(r)
+    expectation += 1.0 * np.einsum('ab,ab', k2[:, :, s, q], tpdm[:, :, p, r])
+    #  (  -1.00000) k2(p,a,b,c) kdelta(q,r) cre(s) cre(a) des(b) des(c)
+    if q == r:
+        expectation += -1.0 * np.einsum('abc,abc', k2[p, :, :, :],
+                                        tpdm[s, :, :, :])
+    #  (   1.00000) k2(p,a,b,c) kdelta(q,s) cre(r) cre(a) des(b) des(c)
+    if q == s:
+        expectation += 1.0 * np.einsum('abc,abc', k2[p, :, :, :],
+                                       tpdm[r, :, :, :])
+    #  (   1.00000) k2(q,a,b,c) kdelta(p,r) cre(s) cre(a) des(b) des(c)
+    if p == r:
+        expectation += 1.0 * np.einsum('abc,abc', k2[q, :, :, :],
+                                       tpdm[s, :, :, :])
+    #  (  -1.00000) k2(q,a,b,c) kdelta(p,s) cre(r) cre(a) des(b) des(c)
+    if p == s:
+        expectation += -1.0 * np.einsum('abc,abc', k2[q, :, :, :],
+                                        tpdm[r, :, :, :])
+    #  (   1.00000) k2(a,p,b,c) kdelta(q,r) cre(s) cre(a) des(b) des(c)
+    if q == r:
+        expectation += 1.0 * np.einsum('abc,abc', k2[:, p, :, :],
+                                       tpdm[s, :, :, :])
+    #  (  -1.00000) k2(a,p,b,c) kdelta(q,s) cre(r) cre(a) des(b) des(c)
+    if q == s:
+        expectation += -1.0 * np.einsum('abc,abc', k2[:, p, :, :],
+                                        tpdm[r, :, :, :])
+    #  (  -1.00000) k2(a,q,b,c) kdelta(p,r) cre(s) cre(a) des(b) des(c)
+    if p == r:
+        expectation += -1.0 * np.einsum('abc,abc', k2[:, q, :, :],
+                                        tpdm[s, :, :, :])
+    #  (   1.00000) k2(a,q,b,c) kdelta(p,s) cre(r) cre(a) des(b) des(c)
+    if p == s:
+        expectation += 1.0 * np.einsum('abc,abc', k2[:, q, :, :],
+                                       tpdm[r, :, :, :])
+    #  (  -1.00000) k2(a,b,p,c) kdelta(q,r) cre(a) cre(b) des(s) des(c)
+    if q == r:
+        expectation += -1.0 * np.einsum('abc,abc', k2[:, :, p, :],
+                                        tpdm[:, :, s, :])
+    #  (   1.00000) k2(a,b,p,c) kdelta(q,s) cre(a) cre(b) des(r) des(c)
+    if q == s:
+        expectation += 1.0 * np.einsum('abc,abc', k2[:, :, p, :],
+                                       tpdm[:, :, r, :])
+    #  (   1.00000) k2(a,b,q,c) kdelta(p,r) cre(a) cre(b) des(s) des(c)
+    if p == r:
+        expectation += 1.0 * np.einsum('abc,abc', k2[:, :, q, :],
+                                       tpdm[:, :, s, :])
+    #  (  -1.00000) k2(a,b,q,c) kdelta(p,s) cre(a) cre(b) des(r) des(c)
+    if p == s:
+        expectation += -1.0 * np.einsum('abc,abc', k2[:, :, q, :],
+                                        tpdm[:, :, r, :])
+    #  (   1.00000) k2(a,b,c,p) kdelta(q,r) cre(a) cre(b) des(s) des(c)
+    if q == r:
+        expectation += 1.0 * np.einsum('abc,abc', k2[:, :, :, p],
+                                       tpdm[:, :, s, :])
+    #  (  -1.00000) k2(a,b,c,p) kdelta(q,s) cre(a) cre(b) des(r) des(c)
+    if q == s:
+        expectation += -1.0 * np.einsum('abc,abc', k2[:, :, :, p],
+                                        tpdm[:, :, r, :])
+    #  (  -1.00000) k2(a,b,c,q) kdelta(p,r) cre(a) cre(b) des(s) des(c)
+    if p == r:
+        expectation += -1.0 * np.einsum('abc,abc', k2[:, :, :, q],
+                                        tpdm[:, :, s, :])
+    #  (   1.00000) k2(a,b,c,q) kdelta(p,s) cre(a) cre(b) des(r) des(c)
+    if p == s:
+        expectation += 1.0 * np.einsum('abc,abc', k2[:, :, :, q],
+                                       tpdm[:, :, r, :])
+    return expectation
+
 def k2_rotgen_grad_one_body(h1, p, q, opdm):
     """
     spin orbital representation
