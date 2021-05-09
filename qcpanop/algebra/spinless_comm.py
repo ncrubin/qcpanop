@@ -342,24 +342,30 @@ if __name__ == "__main__":
 
 
 
-    new_term = commutator_tbob(e_pqrs, E_mn) + commutator_tbob(e_pqrs, OneBodyOp('n', 'm', -1.))
+    new_term = commutator_tbob(e_pqrs, E_mn) + \
+               commutator_tbob(e_pqrs, OneBodyOp('n', 'm', -1.))
     terms_with_contraction = []
     for tt in new_term:
         tt.terms.insert(0, v2)
         terms_with_contraction.append(tt)
 
-    contracted_terms = contract_two_body(terms_with_contraction, summed_indices=['p', 'q', 'r', 's'],
-                      constant_indices=['m', 'n'])
+    contracted_terms = contract_two_body(terms_with_contraction,
+                                         summed_indices=['p', 'q', 'r', 's'],
+                                         constant_indices=['m', 'n'])
 
     double_comm = []
     for tt in contracted_terms:
         print(tt)
         excitation, non_excitation = get_excitation_term(tt)
 
-        new_double_comm = commutator_tbob(excitation, E_tu) + commutator_tbob(excitation, OneBodyOp('u', 't', coeff=-1.))
+        new_double_comm = commutator_tbob(excitation, E_tu) + \
+                          commutator_tbob(excitation, OneBodyOp('u', 't', coeff=-1.))
         for ss in new_double_comm:
-            double_comm.append(Term(ss.cnst * non_excitation.cnst, non_excitation.terms + ss.terms))
+            double_comm.append(Term(ss.cnst * non_excitation.cnst,
+                                    non_excitation.terms + ss.terms))
             print(double_comm[-1])
         print()
 
-    contract_two_body(double_comm, summed_indices=['p', 'q', 'r', 's'], constant_indices=['m', 'n', 'u', 't'])
+    contract_two_body(double_comm,
+                      summed_indices=['p', 'q', 'r', 's'],
+                      constant_indices=['m', 'n', 'u', 't'])
