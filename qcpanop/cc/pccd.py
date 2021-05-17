@@ -25,23 +25,39 @@ def get_h2o():
 
 class pCCD:
 
-    def __init__(self, molecule, iter_max=100, e_convergence=1.0E-6,
-                 r_convergence=1.0E-6):
+    def __init__(self, molecule=None, iter_max=100, e_convergence=1.0E-6,
+                 r_convergence=1.0E-6, oei=None, tei=None, n_electrons=None,
+                 enuc=0):
         self.molecule = molecule
-        self.o = molecule.n_electrons // 2
-        self.v = molecule.n_orbitals - self.o
         self.t0 = None
         self.sigma = None
         self.iter_max = iter_max
         self.e_convergence = e_convergence
         self.r_convergence = r_convergence
 
-    def setup_integrals(self, molecule=None):
-        if molecule is None:
-            molecule = self.molecule
-        oei, tei = molecule.get_integrals()
-        o = molecule.n_electrons // 2
-        v = molecule.n_orbitals - o
+        if molecule is None and (oei is not None and tei is not None and n_electrons is not None):
+            self.oei = oei
+            self.tei = tei
+            self.o = n_electrons // 2
+            norbs = oei.shape[0]
+            self.v = norbs - self.o
+            self.enuc = enuc
+        else:
+            self.o = molecule.n_electrons // 2
+            self.v = molecule.n_orbitals - self.o
+            oei, tei = molecule.get_integrals()
+            self.oei = oei
+            self.tei = tei
+            self.enuc = molecule.nuclear_repulsion
+
+    def setup_integrals(self): # , molecule=None):
+        # if molecule is None:
+        #     molecule = self.molecule
+        # oei, tei = molecule.get_integrals()
+        # o = molecule.n_electrons // 2
+        # v = molecule.n_orbitals - o
+        oei, tei = self.oei, self.tei
+        o, v = self.o, self.v
 
         self.v_iiaa = np.zeros(o * v)
         self.v_iaia = np.zeros(o * v)
@@ -86,7 +102,7 @@ class pCCD:
                 dum -= tei[a + o, k, a + o, k]
             self.f_v[a] = dum
 
-        self.escf = molecule.nuclear_repulsion
+        self.escf = self.enuc # molecule.nuclear_repulsion
         for i in range(o):
             self.escf += oei[i, i] + self.f_o[i]
 
@@ -205,12 +221,43 @@ class pCCD:
 
 
 if __name__ == "__main__":
-    molecule = get_h2o()
-    pccd = pCCD(molecule, iter_max=20)
-    pccd.setup_integrals(molecule)
-    pccd.compute_energy()
+    # molecule = get_h2o()
+    # pccd = pCCD(molecule, iter_max=20)
+    # pccd.setup_integrals()
+    # pccd.compute_energy()
 
-    print("pCCD T2 amps")
-    for i in range(pccd.o):
-        for a in range(pccd.v):
-            print("{}\t{}\t{: 5.20f}".format(i, a, pccd.t2[i * pccd.v + a]))
+    # print("pCCD T2 amps")
+    # for i in range(pccd.o):
+    #     for a in range(pccd.v):
+    #         print("{}\t{}\t{: 5.20f}".format(i, a, pccd.t2[i * pccd.v + a]))
+
+    from openfermion.chem.molecular_data import spinorb_from_spatial
+    dim = 6
+    sdim = 2 * dim
+    bcs_oei = np.diag(np.arange(1, dim + 1))
+    bcs_tei = np.zeros((dim, dim, dim, dim))
+    true_bcs_stei = np.zeros((sdim, sdim, sdim, sdim))
+    bcs_coupling = 0.5
+    for p, q in product(range(dim), repeat=2):
+        bcs_tei[p, q, q, p] = -bcs_coupling
+        bcs_tei[p, q, p, q] = bcs_coupling
+
+    for p, q in product(range(dim), repeat=2):
+        true_bcs_stei[2 * p, 2 * q + 1, 2 * q + 1, 2 * p] = -bcs_coupling
+
+
+    soei, stei = spinorb_from_spatial(bcs_oei, bcs_tei)
+    for p, q, r, s in product(range(stei.shape[0]), repeat=4):
+        if not np.isclose(stei[p, q, r, s], 0):
+            print((p, q, r, s), stei[p, q, r, s], true_bcs_stei[p, q, r, s])
+    bcs_ham = of.InteractionOperator(0, soei, true_bcs_stei)
+    sparse_bcs_ham = of.get_number_preserving_sparse_operator(of.get_fermion_operator(bcs_ham), num_electrons=dim, num_qubits=sdim)
+    w, v = np.linalg.eigh(sparse_bcs_ham.toarray().astype(np.float))
+    print(w[:10])
+    exit()
+
+
+    pccd = pCCD(oei=bcs_oei, tei=bcs_tei, enuc=0, n_electrons=dim)
+    pccd.setup_integrals()
+    print(pccd.f_o, pccd.f_v)
+    # pccd.compute_energy()
