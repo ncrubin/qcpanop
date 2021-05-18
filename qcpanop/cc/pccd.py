@@ -50,12 +50,7 @@ class pCCD:
             self.tei = tei
             self.enuc = molecule.nuclear_repulsion
 
-    def setup_integrals(self): # , molecule=None):
-        # if molecule is None:
-        #     molecule = self.molecule
-        # oei, tei = molecule.get_integrals()
-        # o = molecule.n_electrons // 2
-        # v = molecule.n_orbitals - o
+    def setup_integrals(self):
         oei, tei = self.oei, self.tei
         o, v = self.o, self.v
 
@@ -143,6 +138,7 @@ class pCCD:
         self.correlation_energy = en
         self.total_energy = self.escf + en
         print("\t\tIterations Converged")
+        print("\t\tCorrelation Energy {: 5.20f}".format(self.total_energy - self.escf))
         print("\t\tTotal Energy {: 5.20f}".format(self.total_energy))
 
 
@@ -221,10 +217,10 @@ class pCCD:
 
 
 if __name__ == "__main__":
-    # molecule = get_h2o()
-    # pccd = pCCD(molecule, iter_max=20)
-    # pccd.setup_integrals()
-    # pccd.compute_energy()
+    molecule = get_h2o()
+    pccd = pCCD(molecule, iter_max=20)
+    pccd.setup_integrals()
+    pccd.compute_energy()
 
     # print("pCCD T2 amps")
     # for i in range(pccd.o):
@@ -240,21 +236,24 @@ if __name__ == "__main__":
     bcs_coupling = 0.5
     for p, q in product(range(dim), repeat=2):
         bcs_tei[p, q, q, p] = -bcs_coupling
-        bcs_tei[p, q, p, q] = bcs_coupling
+        bcs_tei[p, q, p, q] = -bcs_coupling
+        bcs_tei[q, p, q, p] = -bcs_coupling
 
     for p, q in product(range(dim), repeat=2):
         true_bcs_stei[2 * p, 2 * q + 1, 2 * q + 1, 2 * p] = -bcs_coupling
 
 
     soei, stei = spinorb_from_spatial(bcs_oei, bcs_tei)
+    astei = np.einsum('ijkl', stei) - np.einsum('ijlk', stei)
+
     for p, q, r, s in product(range(stei.shape[0]), repeat=4):
         if not np.isclose(stei[p, q, r, s], 0):
-            print((p, q, r, s), stei[p, q, r, s], true_bcs_stei[p, q, r, s])
+            print((p, q, r, s), 1 * astei[p, q, r, s], true_bcs_stei[p, q, r, s])
+    exit()
     bcs_ham = of.InteractionOperator(0, soei, true_bcs_stei)
     sparse_bcs_ham = of.get_number_preserving_sparse_operator(of.get_fermion_operator(bcs_ham), num_electrons=dim, num_qubits=sdim)
     w, v = np.linalg.eigh(sparse_bcs_ham.toarray().astype(np.float))
     print(w[:10])
-    exit()
 
 
     pccd = pCCD(oei=bcs_oei, tei=bcs_tei, enuc=0, n_electrons=dim)
