@@ -27,19 +27,6 @@ class DIIS:
 
         b_mat, rhs = self.get_bmat()
         c = np.linalg.solve(b_mat, rhs)
-        # try:
-        #     assert np.isclose(np.sum(c), 1)
-        # except AssertionError:
-        #     print("b-mat")
-        #     print(b_mat)
-        #     print("rhs")
-        #     print(rhs)
-        #     print("Solution")
-        #     print(c)
-        #     print(np.sum(c))
-        #     print(b_mat @ c - rhs.reshape((-1, 1)))
-        #     raise AssertionError
-
         new_p = np.zeros_like(self.p_vecs[0])
         for ii in range(len(self.p_vecs)):
             new_p += c[ii] * self.p_vecs[ii]

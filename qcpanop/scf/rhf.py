@@ -3,8 +3,9 @@ Implement RHF equations with DIIS and other forms of optimization
 """
 import numpy as np
 import scipy as sp
-from .diis import DIIS
-from .fon import FON
+from scipy.linalg import eigh
+from qcpanop.scf.diis import DIIS
+from qcpanop.scf.fon import FON
 
 
 class RHF:
