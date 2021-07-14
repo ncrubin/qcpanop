@@ -2,6 +2,7 @@ import os
 os.environ["MKL_NUM_THREADS"] = "{}".format(os.cpu_count())
 import numpy as np
 from numpy import einsum
+from openfermion.chem.molecular_data import spinorb_from_spatial
 
 
 def ccsd_energy(t1, t2, h, g, o, v):
@@ -444,10 +445,34 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100, stopping_eps=1.0E-8):
             t1 = new_singles
             t2 = new_doubles
             old_energy = current_energy
-            print("\tIteration {: 5d}\t{: 5.15f}\t{: 5.15f}".format(idx, old_energy, delta_e))
+            print("\tIteration {: 5d}\t{: 5.15f}\t{: 5.15f}".format(idx,
+                                                                    old_energy,
+                                                                    delta_e))
     else:
         print("Did not converge")
         return new_singles, new_doubles
+
+
+def prepare_integrals_from_openfermion(molecule):
+    oei, tei = molecule.get_integrals()
+    soei, stei = spinorb_from_spatial(oei, tei)
+    astei = np.einsum('ijkl', stei) - np.einsum('ijlk', stei)
+    gtei = astei.transpose(0, 1, 3, 2)
+    nocc = molecule.n_electrons
+
+    eps = np.kron(molecule.orbital_energies, np.ones(2))
+    n = np.newaxis
+    o = slice(None, nocc)
+    v = slice(nocc, None)
+    e_abij = 1 / (-eps[v, n, n, n] - eps[n, v, n, n] + eps[n, n, o, n] + eps[
+        n, n, n, o])
+    e_ai = 1 / (-eps[v, n] + eps[n, o])
+
+    fock = soei + np.einsum('piiq->pq', astei[:, o, o, :])
+    hf_energy = 0.5 * np.einsum('ii', (fock + soei)[o, o])
+    h = soei
+    g = gtei
+    return h, g, o, v, n, e_ai, e_abij, hf_energy
 
 
 def main():
@@ -544,7 +569,12 @@ def main():
     assert np.allclose(t2 / e_abij, doubles_residual_contractions(t1,t2, h, g, o ,v))
 
     t1f, t2f = kernel(np.zeros_like(t1), np.zeros_like(t2), h, g, o, v, e_ai, e_abij)
-    print(ccsd_energy(t1f, t2f, h, g, o, v) - hf_energy)
+
+    h, g, o, v, n, e_ai, e_abij, hf_energy = prepare_integrals_from_openfermion(molecule)
+    t1f, t2f = kernel(np.zeros_like(t1), np.zeros_like(t2), h, g, o, v, e_ai,
+                      e_abij)
+    # cc = CCSD(oei=h, tei=g, nalpha=nocc, nbeta=nocc, escf=hf_energy, orb_energies=np.diagonal(fock))
+    # cc.solve_for_amplitudes()
 
 if __name__ == "__main__":
     main()

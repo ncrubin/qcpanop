@@ -49,10 +49,13 @@ class RHF:
             dmat += 2 * nn * c[:, [idx]] @ c[:, [idx]].T
         return dmat
 
-    def solve(self):
+    def solve(self, d0=None):
         np.set_printoptions(linewidth=300)
         iter = 0
-        dmat = self.core_density()
+        if d0 is None:
+            dmat = self.core_density()
+        else:
+            dmat = d0
         d_old = dmat.copy()
         e_old = np.trace(self.hcore @ dmat)
         rmsd = 10

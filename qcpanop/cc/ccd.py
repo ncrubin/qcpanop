@@ -1,31 +1,5 @@
-"""
-Implementation of basic CCD equations
-like psi4numpy but through OpenFermion
-"""
-from itertools import product
-
 import numpy as np
 from numpy import einsum
-
-import openfermion as of
-from openfermion.chem.molecular_data import spinorb_from_spatial
-
-
-
-def get_h2o():
-    from openfermionpsi4 import run_psi4
-    geometry = [['O', [0.000000000000, 0.000000000000, -0.068516219320]],
-                ['H', [0.000000000000, -0.790689573744, 0.543701060715]],
-                ['H', [0.000000000000, 0.790689573744, 0.543701060715]]]
-    multiplicity = 1
-    charge = 0
-    basis = 'sto-3g'
-    molecule = of.MolecularData(geometry=geometry, multiplicity=multiplicity,
-                                charge=charge, basis=basis)
-    molecule = run_psi4(molecule)
-    print(molecule.hf_energy)
-    return molecule
-
 
 
 def ccd_energy(t2, h, g, o, v):
@@ -101,251 +75,150 @@ def doubles_residual_contractions(t2, g, o, v):
     return doubles_residual
 
 
-class CCD:
+def kernel(t2, h, g, o, v, e_abij, max_iter=100, stopping_eps=1.0E-8):
 
-    def __init__(self, oei=None, tei=None, molecule=None, iter_max=100, e_convergence=1.0E-6,
-                 r_convergence=1.0E-6, nalpha=None, nbeta=None, escf=None, orb_energies=None):
-        self.molecule = molecule
+    old_energy = ccd_energy(t2, h, g, o, v)
+    for idx in range(max_iter):
 
-        self.t0 = None
-        self.sigma = None
-        self.iter_max = iter_max
-        self.e_convergence = e_convergence
-        self.r_convergence = r_convergence
+        doubles_res = doubles_residual_contractions(t2, g, o, v)
 
+        new_doubles = doubles_res * e_abij
 
-        if molecule is not None:
-            # if molecule is defined
-            if self.molecule.multiplicity != 1:
-                raise ValueError("We are only implementing for closed shell RHF")
+        current_energy = ccd_energy(new_doubles, h, g, o, v)
+        delta_e = np.abs(old_energy - current_energy)
 
-            self.n_alpha = molecule.n_electrons // 2  # sz = 0 apparently
-            self.n_beta = molecule.n_electrons // 2
-
-            # self.spin_orbs = np.kron(molecule.canonical_orbitals, np.eye(2))
-            oei, tei = molecule.get_integrals()
-            soei, stei = spinorb_from_spatial(oei, tei)
-            self.astei = np.einsum('ijkl', stei) - np.einsum('ijlk', stei)
-            self.soei = soei
-
-
-            self.orb_e = molecule.orbital_energies
-            self.sorb_e = np.vstack((self.orb_e, self.orb_e)).flatten(order='F')
-            self.scf_energy = molecule.hf_energy
-
-        else:
-            if not all(v is not None for v in
-                       [oei, tei, nalpha, nbeta, escf, orb_energies]):
-                raise ValueError("Not all inputs specified")
-            self.n_alpha = nalpha
-            self.n_beta = nbeta
-
-            self.astei = tei
-            self.soei = oei
-            self.sorb_e = orb_energies
-            self.scf_energy = escf
-
-        self.gstei = self.astei.transpose(0, 1, 3, 2)
-        self.norbs = self.astei.shape[0]//2
-        self.nso = 2 * self.norbs
-
-        self.nocc = self.n_alpha + self.n_beta
-        self.nvirt = self.nso - self.nocc
-
-        self.n = np.newaxis
-        self.o = slice(None, self.nocc)
-        self.v = slice(self.nocc, None)
-        n, o, v = self.n, self.o, self.v
-        self.e_abij = 1 / (-self.sorb_e[v, n, n, n] - self.sorb_e[n, v, n, n] +
-                           self.sorb_e[n, n, o, n] + self.sorb_e[n, n, n, o])
-
-        self.t_amp = np.zeros((self.nvirt, self.nvirt, self.nocc, self.nocc))
-
-    def solve_for_amplitudes(self):
-        t2, h, g = self.t_amp, self.soei, self.gstei
-        o, v = self.o, self.v
-        e_abij = self.e_abij
-        old_energy = ccd_energy(t2, h, g, o, v)
-        for idx in range(self.iter_max):
-
-            doubles_res = doubles_residual_contractions(t2, g, o, v)
-
-            new_doubles = doubles_res * e_abij
-
-            current_energy = ccd_energy(new_doubles, h, g, o, v)
-            delta_e = np.abs(old_energy - current_energy)
-
-            if delta_e < self.e_convergence:
-                self.t_amp = new_doubles
-                self.ccd_energy = current_energy
-                return new_doubles
-            else:
-                t2 = new_doubles
-                old_energy = current_energy
-                print("\tIteration {: 5d}\t{: 5.15f}\t{: 5.15f}".format(idx,
-                                                                        old_energy,
-                                                                        delta_e))
-        else:
-            print("Did not converge")
-            self.t_amp = new_doubles
-            self.ccd_energy = current_energy
+        if delta_e < stopping_eps:
             return new_doubles
-
-    def compute_energy(self, t_amplitudes):
-        o, v = self.o, self.v
-        gmo = self.astei
-        return (1 / 4) * np.einsum('ijab, abij ->', gmo[o, o, v, v], t_amplitudes, optimize=True)
-
-    def compute_energy_ncr(self):
-        """Amplitude equations determined from pdaggerq"""
-        pass
-
-    def _amplitude_zero_nonpairs(self, tamps):
-        """Zero out non-pair components of the amplitudes
-
-        the pCCD ansatz is sum_{ia}t_{i}^{a}P_{a}^ P_{i} where
-        P_{x}^ = a_{x alpha}^ a_{x beta}^
-
-        :param tamps: (virt, virt, occ, occ) corresponding to t^{ab}_{ij} in
-                      spin-orbitals {a,b,i,j}
-        """
-        pccd_t2_amps = np.zeros_like(tamps)
-        amp_count = 0
-        for a, b in product(range(self.nvirt), repeat=2):
-            for i, j in product(range(self.nocc), repeat=2):
-                a_spatial, b_spatial = a // 2, b // 2
-                i_spatial, j_spatial = i // 2, j // 2
-                if a % 2 == 0 and b % 2 == 1 and i % 2 == 0 and j % 2 == 1 and a_spatial == b_spatial and i_spatial == j_spatial:
-                    pccd_t2_amps[a, b, i, j] = tamps[a, b, i, j]
-                    pccd_t2_amps[b, a, j, i] = tamps[a, b, i, j]
-
-                    pccd_t2_amps[a, b, j, i] = -tamps[a, b, i, j]
-                    pccd_t2_amps[b, a, i, j] = -tamps[a, b, i, j]
-
-                    amp_count += 1
-        return pccd_t2_amps
-
-    def get_pccd_amps(self, tamps):
-        """
-            for i in range(o):
-                for a in range(v):
-                    self.residual[i * v + a]
-        :param tamps:
-        :return:
-        """
-        pccd_t2_amps = np.zeros((self.nvirt//2, self.nocc//2))
-        amp_count = 0
-        for a, b in product(range(self.nvirt), repeat=2):
-            for i, j in product(range(self.nocc), repeat=2):
-                a_spatial, b_spatial = a // 2, b // 2
-                i_spatial, j_spatial = i // 2, j // 2
-                if a % 2 == 0 and b % 2 == 1 and i % 2 == 0 and j % 2 == 1 and a_spatial == b_spatial and i_spatial == j_spatial:
-                    pccd_t2_amps[a_spatial, i_spatial] = tamps[a, b, i, j]
-                    amp_count += 1
-        assert np.isclose((self.nvirt//2) * (self.nocc//2), amp_count)
-        return pccd_t2_amps
-
-    def pccd_solve(self, starting_amps=None):
-        if starting_amps is None:
-            t_amp = self.t_amp
         else:
-            t_amp = starting_amps
+            t2 = new_doubles
+            old_energy = current_energy
+            print("\tIteration {: 5d}\t{: 5.15f}\t{: 5.15f}".format(idx, old_energy, delta_e))
+    else:
+        print("Did not converge")
+        return new_doubles
 
-        gmo = self.astei
-        n, o, v = self.n, self.o, self.v
-        e_abij = self.e_abij
+def run_ccd_from_molecule(molecule):
+    """Run CCD and return amplitudes"""
+    oei, tei = molecule.get_integrals()
+    norbs = int(mf.mo_coeff.shape[1])
+    nso = 2 * norbs
+    occ = mf.mo_occ
+    nele = int(sum(occ))
+    nocc = nele // 2
+    nvirt = norbs - nocc
 
-        # Initialize energy
-        E_CCD = 0.0
+    soei, stei = spinorb_from_spatial(oei, tei)
+    astei = np.einsum('ijkl', stei) - np.einsum('ijlk', stei)
+    pyscf_astei = np.einsum('ijlk', stei)
+    pyscf_astei = pyscf_astei - np.einsum('ijlk', pyscf_astei)
 
-        for cc_iter in range(1, self.iter_max + 1):
-            E_old = E_CCD
+    gtei = astei.transpose(0, 1, 3, 2)
 
-            t_amp = self._amplitude_zero_nonpairs(t_amp)
+    eps = np.kron(molecule.orbital_energies, np.ones(2))
+    n = np.newaxis
+    o = slice(None, 2 * nocc)
+    v = slice(2 * nocc, None)
+    e_abij = 1 / (-eps[v, n, n, n] - eps[n, v, n, n] + eps[n, n, o, n] + eps[
+        n, n, n, o])
+    e_ai = 1 / (-eps[v, n] + eps[n, o])
 
-            # Collect terms
-            mp2 = gmo[v, v, o, o]
+    fock = soei + np.einsum('piiq->pq', astei[:, o, o, :])
+    hf_energy = 0.5 * np.einsum('ii', (fock + soei)[o, o])
+    assert np.isclose(hf_energy + molecule.nuclear_repulsion, molecule.hf_energy)
 
-            cepa1 = (1 / 2) * np.einsum('abcd, cdij -> abij', gmo[v, v, v, v],
-                                        t_amp, optimize=True)
-            cepa2 = (1 / 2) * np.einsum('klij, abkl -> abij', gmo[o, o, o, o],
-                                        t_amp, optimize=True)
-            cepa3a = np.einsum('akic, bcjk -> abij', gmo[v, o, o, v], t_amp,
-                               optimize=True)
-            cepa3b = -cepa3a.transpose(1, 0, 2, 3)
-            cepa3c = -cepa3a.transpose(0, 1, 3, 2)
-            cepa3d = cepa3a.transpose(1, 0, 3, 2)
-            cepa3 = cepa3a + cepa3b + cepa3c + cepa3d
+    t1s = spatial2spin(mycc.t1)
+    t2s = spatial2spin(mycc.t2)
+    h = soei
+    g = gtei
+    t2 = t2s.transpose(2, 3, 0, 1)
 
-            ccd1a_tmp = np.einsum('klcd,bdkl->cb', gmo[o, o, v, v], t_amp,
-                                  optimize=True)
-            ccd1a = np.einsum("cb,acij->abij", ccd1a_tmp, t_amp, optimize=True)
-
-            ccd1b = -ccd1a.transpose(1, 0, 2, 3)
-            ccd1 = -(1 / 2) * (ccd1a + ccd1b)
-
-            ccd2a_tmp = np.einsum('klcd,cdjl->jk', gmo[o, o, v, v], t_amp,
-                                  optimize=True)
-            ccd2a = np.einsum("jk,abik->abij", ccd2a_tmp, t_amp, optimize=True)
-
-            ccd2b = -ccd2a.transpose(0, 1, 3, 2)
-            ccd2 = -(1 / 2) * (ccd2a + ccd2b)
+    t2f = kernel(np.zeros((nso - nele, nso - nele, nele, nele)), h, g, o, v, e_abij)
+    return t2f
 
 
-            ccd3_tmp = np.einsum("klcd,cdij->klij", gmo[o, o, v, v], t_amp,
-                                 optimize=True)
-            ccd3 = (1 / 4) * np.einsum("klij,abkl->abij", ccd3_tmp, t_amp,
-                                       optimize=True)
+def main():
+    from itertools import product
+    import pyscf
+    import openfermion as of
+    from openfermionpyscf import run_pyscf
+    from pyscf.cc.addons import spatial2spin
+    import numpy as np
+    from scipy.linalg import expm
 
-            ccd4a_tmp = np.einsum("klcd,acik->laid", gmo[o, o, v, v], t_amp,
-                                  optimize=True)
-            ccd4a = np.einsum("laid,bdjl->abij", ccd4a_tmp, t_amp,
-                              optimize=True)
+    import fqe
+    from fqe.openfermion_utils import molecular_data_to_restricted_fqe_op
 
-            ccd4b = -ccd4a.transpose(0, 1, 3, 2)
-            ccd4 = (ccd4a + ccd4b)
+    from openfermion.chem.molecular_data import spinorb_from_spatial
 
-            # Update Amplitude
-            residual = self._amplitude_zero_nonpairs(mp2 + cepa1 + cepa2 + cepa3 + ccd1 + ccd2 + ccd3 + ccd4)
-            t_amp_new = -e_abij * residual
-            t_amp_new = self._amplitude_zero_nonpairs(t_amp_new)
+    basis = 'cc-pvdz'
+    mol = pyscf.M(
+        atom='H 0 0 0; B 0 0 {}'.format(1.6),
+        basis=basis)
 
-            # Evaluate Energy
-            E_CCD = (1 / 4) * np.einsum('ijab, abij ->', gmo[o, o, v, v],
-                                        -t_amp_new, optimize=True)
-            t_amp = t_amp_new
-            dE = E_CCD - E_old
-            print('pCCD Iteration %3d: Energy = %4.12f dE = %1.5E' % (
-            cc_iter, E_CCD, dE))
+    mf = mol.RHF().run()
+    mycc = pyscf.cc.CCSD(mf)
+    # mycc.frozen = 1
+    # old_update_amps = mycc.update_amps
 
-            if abs(dE) < self.e_convergence:
-                print("\npCCD Iterations have converged!")
-                break
+    # def update_amps(t1, t2, eris):
+    #     t1, t2 = old_update_amps(t1, t2, eris)
+    #     return t1 * 0, t2
 
-        print('\npCCD Correlation Energy:    %15.12f' % (E_CCD))
-        print('pCCD Total Energy:         %15.12f' % (E_CCD + self.scf_energy))
-        self.t_amp = t_amp
+    # mycc.update_amps = update_amps
+    # mycc.kernel()
+
+    # print('CCD correlation energy', mycc.e_corr)
+    mycc = mf.CCSD().run()
+    print('CCSD correlation energy', mycc.e_corr)
+
+    molecule = of.MolecularData(geometry=[['H', (0, 0, 0)], ['B', (0, 0, 1.6)]],
+                                basis=basis, charge=0, multiplicity=1)
+    molecule = run_pyscf(molecule, run_ccsd=True)
+    hamiltonian = molecule.get_molecular_hamiltonian()
+    elec_ham = molecular_data_to_restricted_fqe_op(molecule)
+    oei, tei = molecule.get_integrals()
+    norbs = int(mf.mo_coeff.shape[1])
+    nso = 2 * norbs
+    occ = mf.mo_occ
+    nele = int(sum(occ))
+    nocc = nele // 2
+    nvirt = norbs - nocc
+    assert np.allclose(np.transpose(mycc.t2, [1, 0, 3, 2]), mycc.t2)
+    print("nocc ", 2 * nocc)
+    print('nvirt ', nso - 2 * nocc)
+
+    soei, stei = spinorb_from_spatial(oei, tei)
+    astei = np.einsum('ijkl', stei) - np.einsum('ijlk', stei)
+    pyscf_astei = np.einsum('ijlk', stei)
+    pyscf_astei = pyscf_astei - np.einsum('ijlk', pyscf_astei)
+
+    gtei = astei.transpose(0, 1, 3, 2)
+
+    eps = np.kron(molecule.orbital_energies, np.ones(2))
+    n = np.newaxis
+    o = slice(None, 2 * nocc)
+    v = slice(2 * nocc, None)
+    e_abij = 1 / (-eps[v, n, n, n] - eps[n, v, n, n] + eps[n, n, o, n] + eps[
+        n, n, n, o])
+    e_ai = 1 / (-eps[v, n] + eps[n, o])
+
+    fock = soei + np.einsum('piiq->pq', astei[:, o, o, :])
+    hf_energy = 0.5 * np.einsum('ii', (fock + soei)[o, o])
+    print(np.einsum('ii', fock[o, o]), np.einsum('ii', (soei + 0.5 * np.einsum('piiq->pq', astei[:, o, o, :]))[o, o]), hf_energy)
+    exit()
+    assert np.isclose(hf_energy + molecule.nuclear_repulsion, molecule.hf_energy)
+
+    t1s = spatial2spin(mycc.t1)
+    t2s = spatial2spin(mycc.t2)
+    h = soei
+    g = gtei
+    t2 = t2s.transpose(2, 3, 0, 1)
+    print(t2.shape)
+    print(np.zeros((nso - nele, nele)).shape)
+
+    t2f = kernel(np.zeros((nso - nele, nso - nele, nele, nele)), h, g, o, v, e_abij)
+    print(ccd_energy(t2f, h, g, o, v) - hf_energy)
 
 
 if __name__ == "__main__":
-    import copy
-    np.set_printoptions(linewidth=500)
-    molecule = get_h2o()
-    ccd = CCD(molecule=molecule, iter_max=20)
-    ccd.solve_for_amplitudes()
-    exit()
-
-    ccd.t_amp = ccd._amplitude_zero_nonpairs(ccd.t_amp)
-    print("Correlation energy from just pCCD amps ", ccd.compute_energy(ccd.t_amp))
-    print("Correlation energy from just pCCD amps ", ccd.compute_energy(ccd.t_amp) + ccd.molecule.hf_energy)
-
-    pccd = CCD(molecule=molecule, iter_max=20)
-    pccd.pccd_solve()
-
-    pccd_amps = pccd.get_pccd_amps(pccd.t_amp)
-    t2_test = np.zeros((pccd.nocc//2) * (pccd.nvirt//2))
-    for i in range(pccd.nocc//2):
-        for a in range(pccd.nvirt//2):
-            t2_test[i * (pccd.nvirt//2) + a] = pccd_amps[a, i]
-    print(t2_test.shape)
-
+    main()
