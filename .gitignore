@@ -89,3 +89,6 @@ ENV/
 
 # no .dat files
 *.dat
+
+# tmp files
+tmp*
