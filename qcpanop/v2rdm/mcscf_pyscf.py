@@ -11,54 +11,6 @@ import hilbert
 import numpy
 import pyscf
 
-from itertools import product
-
-
-class MP2AsFCISolver(object):
-    def kernel(self, h1, h2, norb, nelec, ci0=None, ecore=0, **kwargs):
-        # Kernel takes the set of integrals from the current set of orbitals
-        fakemol = pyscf.M(verbose=0)
-        fakemol.nelectron = sum(nelec)
-        fake_hf = fakemol.RHF()
-        fake_hf._eri = h2
-        fake_hf.get_hcore = lambda *args: h1
-        fake_hf.get_ovlp = lambda *args: numpy.eye(norb)
-        # Build an SCF object fake_hf without SCF iterations to perform MP2
-        fake_hf.mo_coeff = numpy.eye(norb)
-        fake_hf.mo_occ = numpy.zeros(norb)
-        fake_hf.mo_occ[:fakemol.nelectron//2] = 2
-        self.mp2 = fake_hf.MP2().run()
-        return self.mp2.e_tot + ecore, self.mp2.t2
-
-    def make_rdm12(self, t2, norb, nelec):
-        dm1 = self.mp2.make_rdm1(t2)
-        dm2 = self.mp2.make_rdm2(t2)
-        return dm1, dm2
-
-
-class FCIAsFCISolver(object):
-    def kernel(self, h1, h2, norb, nelec, ci0=None, ecore=0, **kwargs):
-        # Kernel takes the set of integrals from the current set of orbitals
-        fakemol = pyscf.M(verbose=0)
-        fakemol.nelectron = sum(nelec)
-        fake_hf = fakemol.RHF()
-        fake_hf._eri = h2
-        fake_hf.get_hcore = lambda *args: h1
-        fake_hf.get_ovlp = lambda *args: numpy.eye(norb)
-        # Build an SCF object fake_hf without SCF iterations to perform MP2
-        fake_hf.mo_coeff = numpy.eye(norb)
-        fake_hf.mo_occ = numpy.zeros(norb)
-        fake_hf.mo_occ[:fakemol.nelectron//2] = 2
-        myci = pyscf.fci.FCI(fake_hf)
-        res = myci.run(ci0=ci0)
-        self.ci = res
-        return self.ci.e_tot + ecore, self.ci.ci
-
-    def make_rdm12(self, civec, ncas, nelec):
-        dm1 = self.ci.make_rdm1(civec, ncas, nelec)
-        dm2 = self.ci.make_rdm2(civec, ncas, nelec)
-        return dm1, dm2
-
 
 class V2RDMAsFCISolver(object):
     def __init__(self, rconvergence=1.e-5, econvergence=1e-4, positivity='dqg', sdp_solver='bpsdp', maxiter=20_000):
