@@ -1,12 +1,20 @@
 """
 Utility to convert pyscf mean-field objects to RDMs
 """
+import psi4
+import sys
+sys.path.insert(0, '/usr/local/google/home/nickrubin/dev')
+import hilbert
+
+
 import numpy as np
-from pyscf import gto, scf, ao2mo
+from pyscf import gto, scf, ao2mo, mcscf
 from functools import reduce
 
+from qcpanop.v2rdm.mcscf_v2rdm import V2RDMAsFCISolver
 
-def rhf_to_v2rdm(mf: scf.RHF, rdm_constraints: str):
+
+def rhf_to_v2rdm(mf, rdm_constraints: str, rconvergence=1.E-8, econvergence=1.E-8, nthreads=8, maxiter=20_000):
     """
     Convert a RHF object from pyscf to call v2rdm object
 
@@ -14,7 +22,7 @@ def rhf_to_v2rdm(mf: scf.RHF, rdm_constraints: str):
     :param rdm_constraints: ['D', 'DQ', 'DQG', 'DG', 'DQGT']
     :return:
     """
-    assert isinstance(mf, scf.rhf.RHF)
+    assert isinstance(mf, (scf.rhf.RHF, scf.rohf.ROHF))
     # make h1 and spatial integrals in MO basis
     eri = ao2mo.kernel(mol, mf.mo_coeff)
     eri = ao2mo.restore(1, eri, mf.mo_coeff.shape[1])
@@ -29,36 +37,12 @@ def rhf_to_v2rdm(mf: scf.RHF, rdm_constraints: str):
     print(h1.shape)  # should (mf.mo_coeff.shape[1],) * 2
 
     # now either build k2 or use hilbert to run v2rdm with singlet case
-
-
-def rohf_to_v2rdm(mf: scf.ROHF, rdm_constraint):
-    """
-    This should be the same integrals as RHF but spin will be different
-    Remember mf.spin is equal to 2S NOT 2S + 1
-
-    :param mf:
-    :param rdm_constraint:
-    :return:
-    """
-    assert isinstance(mf, scf.rohf.ROHF)
-    # make h1 and spatial integrals in MO basis
-    eri = ao2mo.kernel(mol, mf.mo_coeff)
-    eri = ao2mo.restore(1, eri, mf.mo_coeff.shape[1])
-
-    # this produces the unfolded spatial integrals in chemist notation
-    # (11|22)
-    print(eri.shape)  # this should be (mf.mo_coeff.shape[1],) * 4
-    print(mf.mo_coeff.shape[1])
-
-    # this produces spatial MO h1 integrals
-    h1 = reduce(np.dot, (mf.mo_coeff.T, mf.get_hcore(), mf.mo_coeff))
-    print(h1.shape)  # should (mf.mo_coeff.shape[1],) * 2
-
-    neleca, nelecb = mf.nelec
-    spin = mf.mol.spin
-    multiplicity = spin + 1
-
-    # ... run v2RDM
+    mycasci = mcscf.CASCI(mf, mf.mol.nao, mf.mol.nelectron)
+    mycasci.canonicalization = False
+    mycasci.fcisolver = V2RDMAsFCISolver(rconvergence=rconvergence, econvergence=econvergence, nthreads=nthreads, maxiter=maxiter,
+                                         positivity=rdm_constraints, memory_in_mb=5_000)
+    mycasci.kernel()
+    return mycasci
 
 
 def uhf_to_v2rdm(mf: scf.UHF, rdm_constraint):
@@ -95,22 +79,21 @@ def uhf_to_v2rdm(mf: scf.UHF, rdm_constraint):
 
 
 if __name__ == "__main__":
-    mol = gto.M()
-    mol.atom = '''N 0 0 0; N 0 0 1.6'''
-    mol.basis = 'cc-pvtz'
-    mol.charge = 0
-    mol.spin = 0
-    mol.build()
+    # mol = gto.M()
+    # mol.atom = '''Li 0 0 0; H 0 0 1.6'''
+    # mol.basis = 'sto-3g'
+    # mol.charge = 0
+    # mol.spin = 0
+    # mol.build()
 
-    mf = scf.RHF(mol)
-    mf.verbose = 4
-    mf.kernel()
-    rhf_to_v2rdm(mf, 'DQG')
-
+    # mf = scf.RHF(mol)
+    # mf.verbose = 4
+    # mf.kernel()
+    # rhf_to_v2rdm(mf, 'DQG', nthreads=10, rconvergence=1.0E-4, econvergence=1.0E-4)
 
     mol = gto.M()
     mol.atom = '''O 0 0 0; O 0 0 1.6'''
-    mol.basis = 'cc-pvtz'
+    mol.basis = 'sto-3g'
     mol.charge = 0
     mol.spin = 2
     mol.build()
@@ -118,13 +101,14 @@ if __name__ == "__main__":
     mf = scf.ROHF(mol)
     mf.verbose = 4
     mf.kernel()
-    rohf_to_v2rdm(mf, 'DQG')
+    rhf_to_v2rdm(mf, 'DQG', nthreads=10, rconvergence=1.0E-4, econvergence=1.0E-4)
+    exit()
 
 
-    mf = scf.UHF(mol)
-    mf.verbose = 4
-    mf.kernel()
-    uhf_to_v2rdm(mf, 'DQG')
+    # mf = scf.UHF(mol)
+    # mf.verbose = 4
+    # mf.kernel()
+    # uhf_to_v2rdm(mf, 'DQG')
 
 
 

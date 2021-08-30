@@ -1,12 +1,9 @@
-import os
-os.environ['OMP_NUM_THREADS'] = "4"
-os.environ['MKL_NUM_THREADS'] = "4"
-
 import psi4
 import sys
 # sys.path.insert(0, '/usr/local/google/home/nickrubin/dev/hilbert')
 sys.path.insert(0, '/usr/local/google/home/nickrubin/dev')
 import hilbert
+print(hilbert)
 
 import numpy
 import pyscf
@@ -14,7 +11,7 @@ import pyscf
 
 class V2RDMAsFCISolver(object):
     def __init__(self, rconvergence=1.e-5, econvergence=1e-4, positivity='dqg', sdp_solver='bpsdp', maxiter=20_000,
-                 spin=None):
+                 spin=None, nthreads=None, memory_in_mb=5_00):
         # hilbert options
         if sdp_solver.lower() == 'bpsdp':
             psi4.set_module_options('hilbert', {
@@ -36,6 +33,10 @@ class V2RDMAsFCISolver(object):
             raise KeyError("Invalid value of sdp_solver: {}. Must enter bpsdp or rrsdp".format(sdp_solver))
 
         # grab options object
+        if nthreads is not None:
+            psi4.core.set_num_threads(int(nthreads))
+
+        # psi4.set_memory('{} mb'.format(int(memory_in_mb)))
         options = psi4.core.get_options()
         options.set_current_module('HILBERT')
         self.options = options
@@ -49,12 +50,16 @@ class V2RDMAsFCISolver(object):
 
     def kernel(self, h1, h2, norb, nelec, ci0=None, ecore=0, **kwargs):
         # Kernel takes the set of integrals from the current set of orbitals
+
         fakemol = pyscf.M(verbose=0)
         fakemol.nelectron = sum(nelec)
         if nelec[0] == nelec[1]:
             fake_hf = fakemol.RHF()
         else:
             fake_hf = fakemol.ROHF()
+        
+        if h2.ndim == 2:
+            h2 = pyscf.ao2mo.restore(1, h2, h1.shape[0])
 
         fake_hf._eri = h2
         fake_hf.get_hcore = lambda *args: h1
@@ -62,14 +67,12 @@ class V2RDMAsFCISolver(object):
         # Build an SCF object fake_hf without SCF iterations to perform MP2
         fake_hf.mo_coeff = numpy.eye(norb)
         fake_hf.mo_occ = numpy.zeros(norb)
-
         # build the correct alpha beta spins.
         nalpha, nbeta = nelec[0], nelec[1]
         nmo = norb
         alpha_diag = [1] * nalpha + [0] * (nmo - nalpha)
         beta_diag = [1] * nbeta + [0] * (nmo - nbeta)
         fake_hf.mo_occ = numpy.array(alpha_diag) + numpy.array(beta_diag)
-
 
         # run 2-RDM code. Remember that S = ms = 1/2(na - nb)--i.e. always high spin
         v2rdm_pyscf = hilbert.v2RDMHelper(nalpha, nbeta, nmo, h1.flatten(), h2.flatten(), self.options)
@@ -122,6 +125,11 @@ class V2RDMAsFCISolver(object):
         dm2 = spin_summed_rdms[1]
         return dm1, dm2
 
+    def make_rdm1(self, spin_summed_rdms, ncas, nelec):
+        dm1 = spin_summed_rdms[0]
+        return dm1
+
+
 
 if __name__ == "__main__":
     mol = pyscf.M(atom='N 0 0 0; N 0 0 1.1', basis='ccpvtz')
@@ -131,7 +139,7 @@ if __name__ == "__main__":
     print()
     print("Running v2rdm CASSCF")
     v2rdmfci = pyscf.mcscf.CASSCF(mf, 2, 2)
-    v2rdmfci.fcisolver = V2RDMAsFCISolver(rconvergence=1.E-8, econvergence=1.E-8, maxiter=5)
+    v2rdmfci.fcisolver = V2RDMAsFCISolver(rconvergence=1.E-8, econvergence=1.E-8, nthreads=8)
     v2rdmfci.kernel()
     print("Finished running v2rdm casscf")
     print(v2rdmfci.e_tot)
