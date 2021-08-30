@@ -146,31 +146,40 @@ def get_nuc(mydf, kpts=None):
         kpts_lst = np.reshape(kpts, (-1,3))
 
     cell = mydf.cell
-    mesh = mydf.mesh
-    charge = -cell.atom_charges()
+    mesh = mydf.mesh  # mesh dimensions [2Ns + 1]
+    charge = -cell.atom_charges()  # nuclear charge of atoms in cell
     Gv = cell.get_Gv(mesh)
     SI = get_SI(cell, Gv)
-    rhoG = np.dot(charge, SI)
+    assert SI.shape[1] == Gv.shape[0]
 
-    coulG = tools.get_coulG(cell, mesh=mesh, Gv=Gv)
+    rhoG = np.dot(charge, SI)  # this is Z_{I} * S_{I}
+
+    coulG = tools.get_coulG(cell, mesh=mesh, Gv=Gv)  # V(0) = 0 can be treated separately/
+    absG2 = np.einsum('gi,gi->g', Gv, Gv)
+    test_coulG = np.divide(4 * np.pi, absG2, out=np.zeros_like(absG2), where=absG2 != 0) # save divide
+    assert np.allclose(coulG, test_coulG)
+
     vneG = rhoG * coulG
-    potential = np.zeros((Gv.shape[0], Gv.shape[0]))
-    gx = np.fft.fftfreq(mesh[0], 1./mesh[0])
-    gy = np.fft.fftfreq(mesh[1], 1./mesh[1])
-    gz = np.fft.fftfreq(mesh[2], 1./mesh[2])
-    gxyz = lib.cartesian_prod((gx, gy, gz)).astype(int)
-    gxyz_dict = dict(zip([tuple(xx) for xx in gxyz], range(len(gxyz))))
+    # vneG / cell.vol  # Martin 12.16
 
-    for ridx, cidx in product(range(len(gxyz)), repeat=2):
-        qprime_minus_q = tuple(gxyz[ridx] - gxyz[cidx])
-        if qprime_minus_q in gxyz_dict.keys():
-            potential[ridx, cidx] = vneG[gxyz_dict[qprime_minus_q]] / cell.vol
-    return potential
+    # this is for evaluating the potential on a real-space grid
+    # potential = np.zeros((Gv.shape[0], Gv.shape[0]))
+    # gx = np.fft.fftfreq(mesh[0], 1./mesh[0])
+    # gy = np.fft.fftfreq(mesh[1], 1./mesh[1])
+    # gz = np.fft.fftfreq(mesh[2], 1./mesh[2])
+    # gxyz = lib.cartesian_prod((gx, gy, gz)).astype(int)
+    # gxyz_dict = dict(zip([tuple(xx) for xx in gxyz], range(len(gxyz))))
+
+    # for ridx, cidx in product(range(len(gxyz)), repeat=2):
+    #     qprime_minus_q = tuple(gxyz[ridx] - gxyz[cidx])
+    #     if qprime_minus_q in gxyz_dict.keys():
+    #         potential[ridx, cidx] = vneG[gxyz_dict[qprime_minus_q]] / cell.vol
+    # return potential
 
 
 def main():
     # cubic BCC structure (compare to ASE if curious)
-    cell = gto.M(a=np.eye(3) * 20,
+    cell = gto.M(a=np.eye(3) * 10,
                  atom='H 0 0 1.1; H 0 0 0',
                  basis='sto-3g',
                  unit='angstrom',
@@ -181,7 +190,7 @@ def main():
     print("KE cutoff from user ", cell.ke_cutoff)
     print("Mesh size form user KE-cutoff",
           cell.mesh)
-    # exit()
+
     # print(vars(cell))
     # print()
 
@@ -192,7 +201,7 @@ def main():
     # print()
     # print(vars(fftdf))
 
-    # print(cell.a / BOHR)
+    print(cell.a / BOHR)
     print("Cell geometry")
     print(cell.lattice_vectors())
     # Omega = Cell volumes
@@ -226,6 +235,7 @@ def main():
     # f(G) = (1/ sqrt(omega)) * exp(i G . r)
     # where G = 2pi(h.T)^{-1} g
     # where g = [i,j,k] of integers
+    print(cell.get_Gv())
 
     # so now we want to test this by making a periodic function in 3D
     # we will build up to this by starting with a periodic function in 1D
@@ -252,15 +262,18 @@ def main():
 
     print("Real space mesh")
     rsmesh = get_uniform_grids(cell)
+    print(rsmesh)
 
-    print(cell.Gv[28])
-    print(cell.Gv[28][0]**2 + cell.Gv[28][1]**2 + cell.Gv[28][2]**2)
-    print(0.5 * np.linalg.norm(cell.Gv[28])**2)
-    print(0.5 * np.linalg.norm(cell.Gv[28]) ** 2)
+    # print(cell.Gv[28])
+    # print(cell.Gv[28][0]**2 + cell.Gv[28][1]**2 + cell.Gv[28][2]**2)
+    # print(0.5 * np.linalg.norm(cell.Gv[28])**2)
+    # print(0.5 * np.linalg.norm(cell.Gv[28]) ** 2)
 
     # print((cell.Gv + np.array([0, 1.2, 1.3])))
     v_ion = get_nuc(fftdf)
+    exit()
     ke = ke_matrix(cell)
+    exit()
 
     w, v = np.linalg.eigh(v_ion + ke)
     print(w[0] + w[1] + cell.energy_nuc())
