@@ -13,7 +13,8 @@ import pyscf
 
 
 class V2RDMAsFCISolver(object):
-    def __init__(self, rconvergence=1.e-5, econvergence=1e-4, positivity='dqg', sdp_solver='bpsdp', maxiter=20_000):
+    def __init__(self, rconvergence=1.e-5, econvergence=1e-4, positivity='dqg', sdp_solver='bpsdp', maxiter=20_000,
+                 spin=None):
         # hilbert options
         if sdp_solver.lower() == 'bpsdp':
             psi4.set_module_options('hilbert', {
@@ -42,23 +43,35 @@ class V2RDMAsFCISolver(object):
         # this will be the returned variable
         self.rdms = (None, None)
 
+        if spin is None:
+            self.spin = 0  # 2S not 2S + 1. This is how pyscf stores multiplicity
+            self.sz = 0
+
     def kernel(self, h1, h2, norb, nelec, ci0=None, ecore=0, **kwargs):
         # Kernel takes the set of integrals from the current set of orbitals
         fakemol = pyscf.M(verbose=0)
         fakemol.nelectron = sum(nelec)
-        fake_hf = fakemol.RHF()
+        if nelec[0] == nelec[1]:
+            fake_hf = fakemol.RHF()
+        else:
+            fake_hf = fakemol.ROHF()
+
         fake_hf._eri = h2
         fake_hf.get_hcore = lambda *args: h1
         fake_hf.get_ovlp = lambda *args: numpy.eye(norb)
         # Build an SCF object fake_hf without SCF iterations to perform MP2
         fake_hf.mo_coeff = numpy.eye(norb)
         fake_hf.mo_occ = numpy.zeros(norb)
-        fake_hf.mo_occ[:fakemol.nelectron//2] = 2
 
-        # this is where we need to add our v2rdm code.
+        # build the correct alpha beta spins.
         nalpha, nbeta = nelec[0], nelec[1]
         nmo = norb
+        alpha_diag = [1] * nalpha + [0] * (nmo - nalpha)
+        beta_diag = [1] * nbeta + [0] * (nmo - nbeta)
+        fake_hf.mo_occ = numpy.array(alpha_diag) + numpy.array(beta_diag)
 
+
+        # run 2-RDM code. Remember that S = ms = 1/2(na - nb)--i.e. always high spin
         v2rdm_pyscf = hilbert.v2RDMHelper(nalpha, nbeta, nmo, h1.flatten(), h2.flatten(), self.options)
         current_energy = v2rdm_pyscf.compute_energy()
 
@@ -125,6 +138,7 @@ if __name__ == "__main__":
 
     print("pyscf starting casscf")
     pyscffci = pyscf.mcscf.CASSCF(mf, 2, 2)
+    pyscffci.verbose = 5
     pyscffci.kernel()
     print("pyscf fci")
     print(pyscffci.e_tot)
