@@ -66,19 +66,21 @@ def pyscf_to_fqe_wf(pyscf_cimat, pyscf_mf=None, norbs=None, nelec=None):
     fqe_data_ci.coeff = fqe_orderd_coeff
     return fqe_wf_ci
 
-def main():
-    scf_type = 'rohf'
-    spin = 5
-    basis = 'ccpvdz'
-    loc_type = 'pm'
-    chkfile_path = 'heme_cys_rohf_ccpvdz_mult6.chk'
-    print(chkfile_path)
+def active_space_generator(chkfile_path, sys_name, scf_type, spin, basis, loc_type, occ_orbitals, virtual_orbitals):
+    """
+    Generate active space form pyscf checkpoint file
 
-    # active_orbs
-    occ_orbitals = sorted([74, 75, 77, 83, 92, 93, 95, 96, 97, 98, 99, 103, 104, 82, 88, 105, 106, 107, 52, 62, 94, 100])
-    virt_orbitals = sorted([108, 109, 114, 119, 121, 122, 125, 129, 132, 133, 134, 138, 152, 153, 154, 155, 167, 259, 137])
+    :param chkfile_path: path to checkpoitnn file
+    :param sys_name:  name of the system
+    :param scf_type: scf type of the system
+    :param spin:  spin value (2S) like in pyscf
+    :param basis: basis that was used
+    :param loc_type: if localization is used specify.
+    :param occ_orbitals: occupied orbitals
+    :param virtual_orbitals: virtual orbitals
 
-    # scf_dict = {'e_tot', 'mo_coeff', 'mo_occ', 'mo_energy'}
+    Writes a h5py file that stores the active space Hamiltonian
+    """
     mol, scf_dict = scf.chkfile.load_scf(chkfile_path)
 
     active_norb = len(occ_orbitals) + len(virt_orbitals)
@@ -108,7 +110,10 @@ def main():
     print("Num active beta ", active_beta)
     assert np.isclose(active_beta + active_alpha, active_ne)
 
-    mf = scf.ROHF(mol)
+    if nalpha_total == nbeta_total:
+        mf = scf.RHF(mol)
+    else:
+        mf = scf.ROHF(mol)
     mf.e_tot = scf_dict['e_tot']
     mf.mo_coeff = scf_dict['mo_coeff']
     mf.mo_occ = scf_dict['mo_occ']
@@ -122,14 +127,14 @@ def main():
     print(h2e_cas.shape)
     h2e_cas = ao2mo.restore(1, h2e_cas, h1e_cas.shape[0])
     # now use mo coeffs from avas
-    with h5py.File("hamiltonian_heme_cys_mult6_{}_{}_spin{}_{}.h5".format(scf_type, basis, spin, loc_type), 'w') as fid:
+    with h5py.File("hamiltonian_{}_{}_{}_spin{}_{}.h5".format(sys_name, scf_type, basis, spin, loc_type), 'w') as fid:
         fid.create_dataset('ecore', data=float(ecore), dtype=float)
         fid.create_dataset('h1', data=h1e_cas)
         fid.create_dataset('eri', data=h2e_cas)
         fid.create_dataset('active_nalpha', data=int(active_alpha), dtype=int)
         fid.create_dataset('active_nbeta', data=int(active_beta), dtype=int)
 
-    with h5py.File("hamiltonian_heme_cys_mult6_{}_{}_spin{}_{}.h5".format(scf_type, basis, spin, loc_type), 'r') as fid:
+    with h5py.File("hamiltonian_{}_{}_{}_spin{}_{}.h5".format(sys_name, scf_type, basis, spin, loc_type), 'r') as fid:
         ecore = fid['ecore'][...]
         h1e_cas = fid['h1'][...]
         h2e_cas = fid['eri'][...]
@@ -142,7 +147,14 @@ def main():
     eri_full = h2e_cas
     docc = slice(None, min(active_alpha, active_beta))
     socc = slice(min(active_alpha, active_beta), max(active_alpha, active_beta))
-    scf_energy = ecore + \
+
+    if nalpha_total == nbeta_total:
+        scf_energy = ecore + \
+                     2*np.einsum('ii',h1[:num_alpha,:num_alpha]) + \
+                     2*np.einsum('iijj',eri_full[:num_alpha,:num_alpha,:num_alpha,:num_alpha]) - \
+                       np.einsum('ijji',eri_full[:num_alpha,:num_alpha,:num_alpha,:num_alpha])
+    else:
+        scf_energy = ecore + \
                  2.0 * np.einsum('ii', h1[docc, docc]) + \
                  np.einsum('ii', h1[socc, socc]) + \
                  2.0 * np.einsum('iijj', eri_full[docc, docc, docc, docc]) - \
@@ -180,4 +192,19 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    scf_type = 'rohf'
+    spin = 5
+    basis = 'ccpvdz'
+    loc_type = 'pm'
+    chkfile_path = 'heme_cys_rohf_ccpvdz_mult6.chk'
+    # active_orbs
+    occ_orbitals = sorted(
+        [74, 75, 77, 83, 92, 93, 95, 96, 97, 98, 99, 103, 104, 82, 88, 105, 106,
+         107, 52, 62, 94, 100])
+    virt_orbitals = sorted(
+        [108, 109, 114, 119, 121, 122, 125, 129, 132, 133, 134, 138, 152, 153,
+         154, 155, 167, 259, 137])
+
+    print(chkfile_path)
+    active_space_generator(chkfile_path, 'heme_cys', scf_type, spin, basis,
+                           loc_type, occ_orbitals, virtual_orbitals)
