@@ -51,9 +51,44 @@ def quadratic_gradient_prematrix(generator_mat, a, b):
     return pre_matrix_full
 
 
-class RkUpCCSD:
+def evolve_fqe_pair_doubles_alpha_beta(wfn: Wavefunction,
+                                       vij_mat: np.ndarray,
+                                       time=1) -> Wavefunction:
+    r"""Utility for testing evolution of a full 2^{n} wavefunction via
+
+    :math:`exp{-i time * \sum_{i,j}v_{i, j}a_{i, alpha}^{\dagger}a_{j, alpha}a_{i, \beta}^{\dagger}a_{j, beta}}.`
+
+    Args:
+        wfn: fqe_wf with sdim = n
+
+        vij_mat: List[(n x n] matrices n is the spatial orbital rank
+
+        time: evolution time.
+
+    Returns:
+        New evolved 2^{2 * n} x 1 vector
+    """
+    norbs = vij_mat.shape[0]
+    out = copy.deepcopy(wfn)
+    for p, q in product(range(norbs), repeat=2):
+        if np.isclose(vij_mat[p, q], 0):
+            continue
+        fop = of.FermionOperator(
+            ((2 * p, 1), (2 * q, 0), (2 * p + 1, 1), (2 * q + 1, 0)),
+            coefficient=vij_mat[p, q])
+        out = out.time_evolve(time, fop, inplace=True)
+    return out
+
+
+class RkUpCCGSD:
 
     def __init__(self, norb: int, k_layers: int):
+        """
+        A slightly modified restricted k-unitary CCGSD
+
+        :param int norb: Number of spatial orbitals
+        :param int k_layers: number of layers where each layer
+        """
         self.norb = norb
         self.k_layers = k_layers
 
@@ -139,7 +174,7 @@ class RkUpCCSD:
         for (rot_mat, nn_mat) in matricized_variables:
             fqe_quad_ham = RestrictedHamiltonian((1j * rot_mat,))
             current_wf.time_evolve(1, fqe_quad_ham, inplace=True)
-            current_wf = evolve_fqe_charge_charge_alpha_beta(current_wf, nn_mat)
+            current_wf = evolve_fqe_pair_doubles_alpha_beta(current_wf, nn_mat)
         return current_wf
 
     def gradient(self, grad_position, parameters, init_wf: fqe.Wavefunction):
@@ -167,25 +202,25 @@ class RkUpCCSD:
                 current_wf = current_wf.apply(fqe_quad_ham_pre)
                 # current_wf.scale(-1j)
 
-            current_wf = evolve_fqe_charge_charge_alpha_beta(current_wf, nn_mat)
+            current_wf = evolve_fqe_pair_doubles_alpha_beta(current_wf, nn_mat)
 
             if len(np.where(np.isclose(matricized_grad_position[kidx][1], 1))[0]) != 0:
                 grad_row_idx, grad_col_idx = np.where(np.isclose(matricized_grad_position[kidx][1], 1))
                 p, q = int(grad_row_idx[0]), int(grad_col_idx[0])
                 if p != q:
-                    fop = of.FermionOperator(((2 * p, 1), (2 * p, 0), (2 * q + 1, 1), (2 * q + 1, 0)))
+                    fop = of.FermionOperator(((2 * p, 1), (2 * q, 0), (2 * p + 1, 1), (2 * q + 1, 0)))
                     fqe_op = fqe.build_hamiltonian(fop, norb=self.norb,
                                                    conserve_number=True)
                     current_wf_1 = current_wf.apply(fqe_op)
 
-                    fop = of.FermionOperator(((2 * q, 1), (2 * q, 0), (2 * p + 1, 1), (2 * p + 1, 0)))
+                    fop = of.FermionOperator(((2 * q, 1), (2 * p, 0), (2 * q + 1, 1), (2 * p + 1, 0)))
                     fqe_op = fqe.build_hamiltonian(fop, norb=self.norb,
                                                    conserve_number=True)
                     current_wf_2 = current_wf.apply(fqe_op)
                     current_wf = current_wf_1 + current_wf_2
                 else:
 
-                    fop = of.FermionOperator(((2 * p, 1), (2 * p, 0), (2 * q + 1, 1), (2 * q + 1, 0)))
+                    fop = of.FermionOperator(((2 * p, 1), (2 * q, 0), (2 * p + 1, 1), (2 * q + 1, 0)))
                     fqe_op = fqe.build_hamiltonian(fop, norb=self.norb,
                                                    conserve_number=True)
                     current_wf = current_wf.apply(fqe_op)
@@ -232,8 +267,8 @@ class RkUpCCSD:
             # so for each mu copy the current phi and act on it by -iP_{k}
             # then compute overlaps
 
-            phi_state = evolve_fqe_charge_charge_alpha_beta(phi_state, -nn_mat)
-            lambda_state = evolve_fqe_charge_charge_alpha_beta(lambda_state, -nn_mat)
+            phi_state = evolve_fqe_pair_doubles_alpha_beta(phi_state, -nn_mat)
+            lambda_state = evolve_fqe_pair_doubles_alpha_beta(lambda_state, -nn_mat)
 
             # now make a norb * (norb + 1) // 2 states
             # where each states gets iP_{nn_idx}|phi>
@@ -247,20 +282,20 @@ class RkUpCCSD:
                 p, q = int(grad_row_idx[0]), int(grad_col_idx[0])
                 if p != q:
                     fop = of.FermionOperator(
-                        ((2 * p, 1), (2 * p, 0), (2 * q + 1, 1), (2 * q + 1, 0)))
+                        ((2 * p, 1), (2 * q, 0), (2 * p + 1, 1), (2 * q + 1, 0)))
                     fqe_op = fqe.build_hamiltonian(fop, norb=self.norb,
                                                    conserve_number=True)
                     mu_state_1 = mu_state.apply(fqe_op)
 
                     fop = of.FermionOperator(
-                        ((2 * q, 1), (2 * q, 0), (2 * p + 1, 1), (2 * p + 1, 0)))
+                        ((2 * q, 1), (2 * p, 0), (2 * q + 1, 1), (2 * p + 1, 0)))
                     fqe_op = fqe.build_hamiltonian(fop, norb=self.norb,
                                                    conserve_number=True)
                     mu_state_2 = mu_state.apply(fqe_op)
                     mu_state = mu_state_1 + mu_state_2
                 else:
                     fop = of.FermionOperator(
-                        ((2 * p, 1), (2 * p, 0), (2 * q + 1, 1), (2 * q + 1, 0)))
+                        ((2 * p, 1), (2 * q, 0), (2 * p + 1, 1), (2 * q + 1, 0)))
                     fqe_op = fqe.build_hamiltonian(fop, norb=self.norb,
                                                    conserve_number=True)
                     mu_state = mu_state.apply(fqe_op)

@@ -1,6 +1,6 @@
 import fqe
 
-from kUpCCSD import RkUpCCSD
+from kUpCCGSD import RkUpCCGSD
 from fqe.hamiltonians.restricted_hamiltonian import RestrictedHamiltonian
 from fqe.openfermion_utils import integrals_to_fqe_restricted
 import numpy as np
@@ -21,8 +21,8 @@ def random_fqe_rham(norb):
 def test_initialization():
     norb = 4
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
-    assert isinstance(ansatz, RkUpCCSD)
+    ansatz = RkuCJ(norb, k_layers)
+    assert isinstance(ansatz, RkuCJ)
     assert ansatz.k_layers == 1
     assert ansatz.norb == 4
 
@@ -30,7 +30,7 @@ def test_initialization():
 def test_matricize_variables_k1():
     norb = 5
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
 
     x_0_rotation = np.random.random((norb**2)).reshape((norb, norb))
     x_0_rotation = x_0_rotation - x_0_rotation.T
@@ -55,7 +55,7 @@ def test_matricize_variables_k1():
 def test_matricize_variables_k2():
     norb = 6
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
 
     x_0_rotation = np.random.random((norb ** 2)).reshape((norb, norb))
     x_0_rotation = x_0_rotation - x_0_rotation.T
@@ -92,7 +92,7 @@ def test_matricize_variables_k2():
 def test_wavefunction_quadratic_evolution():
     norb = 8
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
 
     x0 = ansatz.zero_guess()
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
@@ -119,7 +119,7 @@ def test_wavefunction_quadratic_evolution():
 
     norb = 8
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     x0 = ansatz.zero_guess()
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
     init_wf.set_wfn(strategy='hartree-fock')
@@ -153,7 +153,7 @@ def test_wavefunction_quadratic_evolution():
 def test_wavefunction_coulomb_evolution():
     norb = 8
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
 
     x0 = ansatz.zero_guess()
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
@@ -172,7 +172,7 @@ def test_wavefunction_coulomb_evolution():
 
     norb = 8
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     x0 = ansatz.zero_guess()
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
     init_wf.set_wfn(strategy='hartree-fock')
@@ -198,7 +198,7 @@ def test_wavefunction_coulomb_evolution():
 def test_wavefunction_evolution():
     norb = 8
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
 
     x0 = ansatz.zero_guess()
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
@@ -225,7 +225,7 @@ def test_one_body_gradient():
     np.random.seed(25)
     norb = 6
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
     init_wf.set_wfn(strategy='hartree-fock')
 
@@ -272,7 +272,7 @@ def test_two_body_gradient():
     np.random.seed(25)
     norb = 6
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
     # init_wf.set_wfn(strategy='hartree-fock')
     init_wf.set_wfn(strategy='random')
@@ -326,7 +326,7 @@ def test_full_gradient():
     np.random.seed(25)
     norb = 6
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
     # init_wf.set_wfn(strategy='hartree-fock')
     init_wf.set_wfn(strategy='random')
@@ -382,7 +382,7 @@ def test_two_layer_full_gradient():
     np.random.seed(25)
     norb = 6
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     init_wf = fqe.Wavefunction([[norb, 0, norb]])
     # init_wf.set_wfn(strategy='hartree-fock')
     init_wf.set_wfn(strategy='random')
@@ -460,7 +460,7 @@ def test_cost_func_grad():
     assert np.isclose(init_wf.expectationValue(fqe_ham).real, molecule.hf_energy)
 
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     obj_val, grad_val = ansatz.gradient_obj(random_params, init_wf, fqe_ham)
@@ -484,7 +484,7 @@ def test_cost_func_grad():
         assert np.isclose(grad_val[xx], fd_grad_val, atol=1.0E-6)
 
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     obj_val, grad_val = ansatz.gradient_obj(random_params, init_wf, fqe_ham)
@@ -526,7 +526,7 @@ def test_cost_func_grad_backprop():
     assert np.isclose(init_wf.expectationValue(fqe_ham).real, molecule.hf_energy)
 
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     obj_val, grad_val = ansatz.gradient_backprop(random_params, init_wf, fqe_ham)
@@ -550,7 +550,7 @@ def test_cost_func_grad_backprop():
         assert np.isclose(grad_val[xx], fd_grad_val, atol=1.0E-6)
 
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     obj_val, grad_val = ansatz.gradient_backprop(random_params, init_wf, fqe_ham)
@@ -593,7 +593,7 @@ def test_timing_backprop_vs_normalgrad():
     assert np.isclose(init_wf.expectationValue(fqe_ham).real, molecule.hf_energy)
 
     k_layers = 1
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     start_time_bp = time.time()
@@ -607,7 +607,7 @@ def test_timing_backprop_vs_normalgrad():
     print("normal grad timing {}".format(end_time_ng - start_time_ng))
 
     k_layers = 2
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     print("k = 2 relative gradient timings")
@@ -621,7 +621,7 @@ def test_timing_backprop_vs_normalgrad():
     print("normal grad timing {}".format(end_time_ng - start_time_ng))
 
     k_layers = 3
-    ansatz = RkUpCCSD(norb, k_layers)
+    ansatz = RkuCJ(norb, k_layers)
     random_params = np.random.randn(len(ansatz.zero_guess()))
 
     print("k = 3 relative gradient timings")
