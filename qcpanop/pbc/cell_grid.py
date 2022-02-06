@@ -177,11 +177,51 @@ def get_nuc(mydf, kpts=None):
     # return potential
 
 
+def get_pp(cell):
+    from pyscf.pbc.gto.pseudo.pp import get_vlocG, get_gth_projG
+    vlocG = get_vlocG(cell, Gv=cell.Gv)  # get VlocG for each atom! n_atoms x n_G
+
+    hs, projs = get_gth_projG(cell, cell.Gv)
+    #print(hs)
+    #print(projs[0][0][0][0]) # [atm][l][m][i][ ngrids ]
+    #print(len(projs))  # atoms
+    #print(len(projs[0])) # num_non-local projectors angular moment l
+    #print(projs[0][1])
+
+    print(hs)
+    for ia in range(cell.natm):
+        symb = cell.atom_symbol(ia)
+        if symb not in cell._pseudo:
+            continue
+        print("sym ", symb)
+        pp = cell._pseudo[symb]
+        print(pp)
+        for l, proj in enumerate(pp[5:]):
+            print("l ", l, " proj ", proj)
+            rl, nl, hl = proj
+            hl = np.asarray(hl)
+            h_mat_to_print = np.zeros((3, 3), dtype=hl.dtype)
+            h_mat_to_print[:hl.shape[0], :hl.shape[1]] = hl
+            print(h_mat_to_print)
+                # pYlm = np.empty((nl,l*2+1,ngrids))
+                # for k in range(nl):
+                #     qkl = _qli(G_rad*rl, l, k)
+
+    exit()
+
+
+
 def main():
     # cubic BCC structure (compare to ASE if curious)
+    # cell = gto.M(a=np.eye(3) * 10,
+    #             atom='C 0 0 1.1; H 0 0 0',
+    #             basis='sto-3g',
+    #             unit='angstrom',
+    #             ke_cutoff=0.5)
     cell = gto.M(a=np.eye(3) * 10,
-                 atom='H 0 0 1.1; H 0 0 0',
+                 atom='Co 0 0 0',
                  basis='sto-3g',
+                 pseudo='gth-blyp',
                  unit='angstrom',
                  ke_cutoff=0.5)
     cell.build()
@@ -191,16 +231,8 @@ def main():
     print("Mesh size form user KE-cutoff",
           cell.mesh)
 
-    # print(vars(cell))
-    # print()
-
     khf = scf.RHF(cell)
     fftdf = khf.with_df
-    fftdf.get_nuc
-    # print(vars(khf))
-    # print()
-    # print(vars(fftdf))
-
     print(cell.a / BOHR)
     print("Cell geometry")
     print(cell.lattice_vectors())
@@ -235,7 +267,7 @@ def main():
     # f(G) = (1/ sqrt(omega)) * exp(i G . r)
     # where G = 2pi(h.T)^{-1} g
     # where g = [i,j,k] of integers
-    print(cell.get_Gv())
+    print(len(cell.get_Gv()))
 
     # so now we want to test this by making a periodic function in 3D
     # we will build up to this by starting with a periodic function in 1D
@@ -262,23 +294,19 @@ def main():
 
     print("Real space mesh")
     rsmesh = get_uniform_grids(cell)
-    print(rsmesh)
+    print(len(rsmesh))
 
     # print(cell.Gv[28])
     # print(cell.Gv[28][0]**2 + cell.Gv[28][1]**2 + cell.Gv[28][2]**2)
     # print(0.5 * np.linalg.norm(cell.Gv[28])**2)
     # print(0.5 * np.linalg.norm(cell.Gv[28]) ** 2)
 
-    # print((cell.Gv + np.array([0, 1.2, 1.3])))
-    v_ion = get_nuc(fftdf)
-    exit()
-    ke = ke_matrix(cell)
-    exit()
+    # # print((cell.Gv + np.array([0, 1.2, 1.3])))
+    # v_ion = get_nuc(fftdf)
+    # ke = ke_matrix(cell)
+    # exit()
 
-    w, v = np.linalg.eigh(v_ion + ke)
-    print(w[0] + w[1] + cell.energy_nuc())
-    print()
-
+    get_pp(cell)
 
 
 

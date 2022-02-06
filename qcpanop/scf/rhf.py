@@ -201,7 +201,6 @@ if __name__ == "__main__":
     #     basis='sto-3g',
     # )
     s = mol.intor('int1e_ovlp')
-
     t = mol.intor('int1e_kin')
     v = mol.intor('int1e_nuc')
     eri = mol.intor('int2e', aosym='s1')  # (ij|kl)

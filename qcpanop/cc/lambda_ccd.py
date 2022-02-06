@@ -1541,10 +1541,16 @@ def main():
     import numpy as np
 
     np.set_printoptions(linewidth=500)
-    basis = 'cc-pvdz'
-    mol = pyscf.M(
-        atom='H 0 0 0; F 0 0 {}'.format(1.6),
-        basis=basis)
+    basis = 'sto-3g'
+    # mol = pyscf.M(
+    #     atom='H 0 0 0; F 0 0 {}'.format(1.6),
+    #     basis=basis)
+    mol = pyscf.M()
+    mol.atom=  [['O', [0.000000000000, 0.000000000000, -0.068516219320]],
+                ['H', [0.000000000000, -0.790689573744, 0.543701060715]],
+                ['H', [0.000000000000, 0.790689573744, 0.543701060715]]]
+    mol.basis = basis
+    mol.build()
 
     mf = mol.RHF()
     mf.verbose = 3
@@ -1578,10 +1584,10 @@ def main():
     print(e1 + e2 - mf.e_tot + mol.energy_nuc())
 
 
-    molecule = of.MolecularData(geometry=[['H', (0, 0, 0)], ['F', (0, 0, 1.6)]],
-                                basis=basis, charge=0, multiplicity=1)
-    molecule = run_pyscf(molecule, run_ccsd=True)
-    # oei, tei = molecule.get_integrals()
+    # molecule = of.MolecularData(geometry=[['H', (0, 0, 0)], ['F', (0, 0, 1.6)]],
+    #                             basis=basis, charge=0, multiplicity=1)
+    # molecule = run_pyscf(molecule, run_ccsd=True)
+    # # oei, tei = molecule.get_integrals()
     oei, tei = h1, eri.transpose(0, 2, 3, 1)
     occ = mf.mo_occ
     nele = int(sum(occ))
@@ -1603,7 +1609,7 @@ def main():
     print(rdm_energy + mol.energy_nuc(), mf.e_tot)
     assert np.allclose(rdm_energy + mol.energy_nuc(), mf.e_tot)
 
-    eps = np.kron(molecule.orbital_energies, np.ones(2))
+    eps = np.kron(mf.mo_energy, np.ones(2))
     n = np.newaxis
     o = slice(None, nsocc)
     v = slice(nsocc, None)
@@ -1617,7 +1623,7 @@ def main():
     hf_energy_test = 1.0 * einsum('ii', fock[o, o]) -0.5 * einsum('ijij', gtei[o, o, o, o])
     print("HF energies")
     print(hf_energy, rdm_energy)
-    assert np.isclose(hf_energy, mf.e_tot - molecule.nuclear_repulsion)
+    assert np.isclose(hf_energy, mf.e_tot - mf.energy_nuc())
     assert np.isclose(hf_energy_test, hf_energy)
 
     g = gtei
@@ -1625,7 +1631,6 @@ def main():
     print("T1/2 from pyscf")
     print(np.linalg.norm(singles_residual(t1, t2, fock, g, o, v)))
     print(np.linalg.norm(doubles_residual(t1, t2, fock, g, o, v)))
-    exit()
 
     print("l1/2 from pyscf")
     print(np.linalg.norm(lambda_singles(t1, t2, l1, l2, fock, g, o, v)))
@@ -1636,7 +1641,6 @@ def main():
     opdm_b = ncr_opdm[1::2, 1::2]
     opdm_s = (opdm_a + opdm_b + opdm_a.T + opdm_b.T) / 2
     print(opdm_s)
-    print()
     print(pyscf_sopdm)
     print("1-RDM symm norm diff ", np.linalg.norm(opdm_s - pyscf_sopdm))
 
@@ -1651,7 +1655,6 @@ def main():
 
     print("diff from pyscf t1/t2", np.linalg.norm(t1f - t1), np.linalg.norm(t2f - t2))
     print("diff from pyscf l1/l2", np.linalg.norm(l1f - l1), np.linalg.norm(l2f - l2))
-
 
     d1hf = np.eye(2 * norbs)
     opdm = ccsd_d1(t1, t2, l1, l2, d1hf, o, v)

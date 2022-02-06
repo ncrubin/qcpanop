@@ -9,16 +9,17 @@ import openfermion as of
 
 
 def get_h2o():
-    from openfermionpsi4 import run_psi4
+    # from openfermionpsi4 import run_psi4
+    from openfermionpyscf import run_pyscf
     geometry = [['O', [0.000000000000, 0.000000000000, -0.068516219320]],
                 ['H', [0.000000000000, -0.790689573744, 0.543701060715]],
                 ['H', [0.000000000000, 0.790689573744, 0.543701060715]]]
     multiplicity = 1
     charge = 0
-    basis = 'sto-3g'
+    basis = '6-31g'
     molecule = of.MolecularData(geometry=geometry, multiplicity=multiplicity,
                                 charge=charge, basis=basis)
-    molecule = run_psi4(molecule)
+    molecule = run_pyscf(molecule)
     print(molecule.hf_energy)
     return molecule
 
@@ -222,41 +223,84 @@ if __name__ == "__main__":
     pccd.setup_integrals()
     pccd.compute_energy()
 
-    # print("pCCD T2 amps")
-    # for i in range(pccd.o):
-    #     for a in range(pccd.v):
-    #         print("{}\t{}\t{: 5.20f}".format(i, a, pccd.t2[i * pccd.v + a]))
+    print("pCCD T2 amps")
+    for i in range(pccd.o):
+        for a in range(pccd.v):
+            print("{}\t{}\t{: 5.20f}".format(i, a, pccd.t2[i * pccd.v + a]))
 
+    from lambda_ccd_with_pccd_restriction import LambdaCCD
     from openfermion.chem.molecular_data import spinorb_from_spatial
-    dim = 6
-    sdim = 2 * dim
-    bcs_oei = np.diag(np.arange(1, dim + 1))
-    bcs_tei = np.zeros((dim, dim, dim, dim))
-    true_bcs_stei = np.zeros((sdim, sdim, sdim, sdim))
-    bcs_coupling = 0.5
-    for p, q in product(range(dim), repeat=2):
-        bcs_tei[p, q, q, p] = -bcs_coupling
-        bcs_tei[p, q, p, q] = -bcs_coupling
-        bcs_tei[q, p, q, p] = -bcs_coupling
-
-    for p, q in product(range(dim), repeat=2):
-        true_bcs_stei[2 * p, 2 * q + 1, 2 * q + 1, 2 * p] = -bcs_coupling
-
-
-    soei, stei = spinorb_from_spatial(bcs_oei, bcs_tei)
+    from lambda_ccd import kernel, ccsd_energy
+    # pccd_lccd = LambdaCCD(molecule, restrict_to_pair_doubles=False)
+    # oei, tei = molecule.oei, pccd.tei
+    oei, tei = molecule.get_integrals()
+    soei, stei = spinorb_from_spatial(oei, tei)
     astei = np.einsum('ijkl', stei) - np.einsum('ijlk', stei)
+    gtei = astei.transpose(0, 1, 3, 2)
 
-    for p, q, r, s in product(range(stei.shape[0]), repeat=4):
-        if not np.isclose(stei[p, q, r, s], 0):
-            print((p, q, r, s), 1 * astei[p, q, r, s], true_bcs_stei[p, q, r, s])
-    exit()
-    bcs_ham = of.InteractionOperator(0, soei, true_bcs_stei)
-    sparse_bcs_ham = of.get_number_preserving_sparse_operator(of.get_fermion_operator(bcs_ham), num_electrons=dim, num_qubits=sdim)
-    w, v = np.linalg.eigh(sparse_bcs_ham.toarray().astype(np.float))
-    print(w[:10])
+    mf = molecule._pyscf_data['scf']
+    occ = mf.mo_occ
+    nele = int(sum(occ))
+    nocc = nele // 2
+    norbs = oei.shape[0]
+    nsvirt = 2 * (norbs - nocc)
+    nsocc = 2 * nocc
+
+    eps = np.kron(molecule.orbital_energies, np.ones(2))
+    n = np.newaxis
+    o = slice(None, nsocc)
+    v = slice(nsocc, None)
 
 
-    pccd = pCCD(oei=bcs_oei, tei=bcs_tei, enuc=0, n_electrons=dim)
+
+    e_abij = 1 / (-eps[v, n, n, n] - eps[n, v, n, n] + eps[n, n, o, n] + eps[
+        n, n, n, o])
+    e_ai = 1 / (-eps[v, n] + eps[n, o])
+
+    fock = soei + np.einsum('piiq->pq', astei[:, o, o, :])
+    hf_energy = 0.5 * np.einsum('ii', (fock + soei)[o, o])
+    hf_energy_test = 1.0 * np.einsum('ii', fock[o, o]) -0.5 * np.einsum('ijij', gtei[o, o, o, o])
+    print("HF energies")
+    print(hf_energy, mf.e_tot - mf.energy_nuc())
+
+
+    # pccd_lccd.solve_cc_equations(soei, astei)
+    t1z, t2z = np.zeros((nsvirt, nsocc)), np.zeros((nsvirt, nsvirt, nsocc, nsocc))
+    t1f, t2f, l1f, l2f = kernel(t1z, t2z, fock, gtei, o, v, e_ai, e_abij,
+                                stopping_eps=1.0E-12)
+
+    print("Final Correlation Energy")
+    print(ccsd_energy(t1f, t2f, fock, gtei, o, v) - hf_energy)
+
+    print("E(CCSD)-NCR = {}".format(ccsd_energy(t1f, t2f, fock, gtei, o, v) + mf.energy_nuc()))
+
+    mycc = mf.CCSD()
+    mycc.conv_tol = 1.0E-12
+    ecc, pyscf_t1, pyscf_t2 = mycc.kernel()
+    print('CCSD correlation energy', mycc.e_corr)
+
+
+
+    lccd = LambdaCCD(molecule=molecule, e_convergence=mycc.conv_tol)
+    lccd.solve_cc_equations(soei, astei)
+
+
+    from pyscf import cc
+    mycc = cc.CCSD(mf)
+    old_update_amps = mycc.update_amps
+    def update_amps(t1, t2, eris):
+        t1, t2 = old_update_amps(t1, t2, eris)
+        return t1 * 0, t2
+    mycc.update_amps = update_amps
+    mycc.kernel()
+
+    lccd = LambdaCCD(molecule=molecule, e_convergence=mycc.conv_tol, restrict_to_pair_doubles=True,
+                     iter_max=500)
+    lccd.solve_cc_equations(soei, astei)
+
+    pccd = pCCD(molecule, iter_max=20)
     pccd.setup_integrals()
-    print(pccd.f_o, pccd.f_v)
-    # pccd.compute_energy()
+    pccd.compute_energy()
+
+
+

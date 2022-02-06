@@ -383,7 +383,7 @@ def spatial_oo(oei: np.ndarray, tei: np.ndarray, sopdm: np.ndarray,
             comm_grad[idx] = comm_grad_val
 
             test_comm_grad_val = k2_rotgen_grad(k2_tensor, 2 * v, 2 * o, tpdm) + k2_rotgen_grad(k2_tensor, 2 * v + 1, 2 * o + 1, tpdm)
-            assert np.isclose(test_comm_grad_val, comm_grad_val)
+            # assert np.isclose(test_comm_grad_val, comm_grad_val)
 
         grad_residual = np.linalg.norm(comm_grad)
 
@@ -406,7 +406,7 @@ def spatial_oo(oei: np.ndarray, tei: np.ndarray, sopdm: np.ndarray,
                     comm_hess[idx, jdx] = 0.5 * hess_val
                     comm_hess[jdx, idx] = 0.5 * hess_val
 
-        assert np.allclose(comm_hess, comm_hess.T)
+        # assert np.allclose(comm_hess, comm_hess.T)
 
         new_fr_vals = stepper(comm_grad, comm_hess)
 
@@ -471,6 +471,9 @@ def main():
 
     pyscf_scf =  molecule._pyscf_data['scf']
     pyscf_molecule = molecule._pyscf_data['mol']
+    print("PYSCF ENERGY: ", )
+    print(type(pyscf_scf))
+    print(pyscf_scf.e_tot)
     S = pyscf_scf.get_ovlp()
     Hcore = pyscf_scf.get_hcore()
     # Rotate back to AO basis
@@ -485,13 +488,13 @@ def main():
     reduced_ham = of.make_reduced_hamiltonian(moleham,
                                               molecule.n_electrons)
 
-    sopdm = opdm[::2, ::2] + opdm[1::2, 1::2]
-    stpdm = tpdm[::2, ::2, ::2, ::2] + tpdm[1::2, 1::2, 1::2, 1::2] + \
-             tpdm[::2, 1::2, 1::2, ::2] + tpdm[1::2, ::2, ::2, 1::2]
+    # sopdm = opdm[::2, ::2] + opdm[1::2, 1::2]
+    # stpdm = tpdm[::2, ::2, ::2, ::2] + tpdm[1::2, 1::2, 1::2, 1::2] + \
+    #          tpdm[::2, 1::2, 1::2, ::2] + tpdm[1::2, ::2, ::2, 1::2]
 
-    # sopdm = hf_opdm[::2, ::2] + hf_opdm[1::2, 1::2]
-    # stpdm = hf_tpdm[::2, ::2, ::2, ::2] + hf_tpdm[1::2, 1::2, 1::2, 1::2] + \
-    #         hf_tpdm[::2, 1::2, 1::2, ::2] + hf_tpdm[1::2, ::2, ::2, 1::2]
+    sopdm = hf_opdm[::2, ::2] + hf_opdm[1::2, 1::2]
+    stpdm = hf_tpdm[::2, ::2, ::2, ::2] + hf_tpdm[1::2, 1::2, 1::2, 1::2] + \
+            hf_tpdm[::2, 1::2, 1::2, ::2] + hf_tpdm[1::2, ::2, ::2, 1::2]
 
 
     fqe_hf_wf = fqe.Wavefunction([[nelec, sz, norbs]])
@@ -500,7 +503,8 @@ def main():
     # unitary = orbital_optimize_spinorb(reduced_ham=reduced_ham, tpdm=hf_tpdm,
     #                                    verbose=True, method='newton-raphson')
     # unitary = oo_so_sep(obi.copy(), tbi.copy(), tpdm.copy(), verbose=True, method='newton-raphson')
-    unitary = spatial_oo(obi.copy(), tbi.copy(), sopdm, stpdm, tpdm=tpdm.copy(), opdm=opdm.copy(), verbose=True, method='augmented-hessian')
+    # unitary = spatial_oo(obi.copy(), tbi.copy(), sopdm, stpdm, tpdm=tpdm.copy(), opdm=opdm.copy(), verbose=True, method='augmented-hessian')
+    unitary = spatial_oo(obi.copy(), tbi.copy(), sopdm, stpdm, tpdm=hf_tpdm.copy(), opdm=hf_opdm.copy(), verbose=True, method='augmented-hessian')
     print(molecule.hf_energy - molecule.nuclear_repulsion)
 
 if __name__ == "__main__":
