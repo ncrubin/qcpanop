@@ -413,6 +413,31 @@ def spinless_rotgrad_onebody(h1, p, q, sopdm):
     return expectation
 
 
+def spinless_rotgrad_onebody_allterms(h1, sopdm):
+    """
+    Use spin-summed 1-RDM to get gradient with respect to the 1-body operartor
+
+    h1 = \sum_{\sigma,mn}h_{mn}a_{m\sigma}^{\dagger}a_{n\sigma}
+
+    <psi|[h1, E_{pq}]|psi>
+
+    :param h1: one-electron integrals
+    :param p: spatial index of E_{pq} - E_{qp}
+    :param q: spatial index of E_{pq} - E_{qp}
+    :param sopdm: spin-summed 1-RDM
+    """
+    expectation = 0.
+    gradvals = np.einsum('iP,iQ-PQ', h1, sopdm)
+    # expectation += np.dot(h1[:, p], sopdm[:, q])
+    gradvals -= np.einsum('Qi,Pi->PQ', h1, sopdm)
+    # expectation -= np.dot(h1[q, :], sopdm[p, :])
+    gradvals -= np.einsum('iQ,iP-PQ', h1, sopdm)
+    # expectation -= np.dot(h1[:, q], sopdm[:, p])
+    gradvals += np.einsum('Pi,Qi->PQ', h1, sopdm)
+    # expectation += np.dot(h1[p, :], sopdm[q, :])
+    return gradvals
+
+
 def spinless_rothess_onebody(h1, p, q, r, s, sopdm):
     """
     Use spin-summed 1-RDM to get hessian with respect to the 1-body operartor
