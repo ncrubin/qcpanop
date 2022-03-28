@@ -30,7 +30,7 @@ def create_geometry_string(geometry):
     return geo_string
 
 
-def read_xyz(xyz_file, units="angstrom"):
+def read_xyz(xyz_file, units="angstrom", return_comment=False):
     """
     XYZ is a file where the first line contains the number of atoms,
     then a space,
@@ -55,13 +55,17 @@ def read_xyz(xyz_file, units="angstrom"):
                 num_atoms = int(line)
             elif line_number == 1:
                 # comment line
+                comment_line = line
                 continue
             else:
                 atomic_symbol, x, y, z = line.split()
                 atomic_symbols.append(atomic_symbol)
                 xyz_coords.append([float(x), float(y), float(z)])
 
-    return atomic_symbols, xyz_coords
+    if return_comment:
+        return atomic_symbols, xyz_coords, comment_line
+    else:
+        return atomic_symbols, xyz_coords
 
 
 if __name__ == "__main__":

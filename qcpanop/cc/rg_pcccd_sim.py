@@ -61,8 +61,14 @@ def get_sz_projector(n_qubits, n_target):
                              shape=(2 ** n_qubits, 2 ** n_qubits))
     return n_projector
 
-
 def get_doci_projector(n_qubits, n_target):
+    """Get the projector on to the doubly occupied space
+
+    :param int n_qubits: number of qubits (or fermionic modes)
+    :param int n_target: number of electrons total
+    :return: coo_matrix that is 1 along diagonal elements that correspond
+             to doci terms.
+    """
     n_row_idx = []
     for ii in range(2**n_qubits):
         ket = np.binary_repr(ii, width=n_qubits)
@@ -73,7 +79,7 @@ def get_doci_projector(n_qubits, n_target):
             n_row_idx.append(ii)
     n_projector = coo_matrix(([1] * len(n_row_idx), (n_row_idx, n_row_idx)),
                              shape=(2 ** n_qubits, 2 ** n_qubits))
-    return n_projector
+    return n_projector, n_row_idx
 
 
 def get_gs(ham, projectors=None, sector_op=None, sector_n=None):
@@ -184,7 +190,7 @@ def solve_cc_equations2(soei, astei):
     g = astei.transpose(0, 1, 3, 2)
     t1z, t2z = np.zeros((nsvirt, nsocc)), np.zeros((nsvirt, nsvirt, nsocc, nsocc))
     t1f, t2f, l1f, l2f = kernel2(t1z, t2z, soei, g, o, v, e_ai, e_abij,
-                                stopping_eps=1.0E-6, max_iter=300)
+                                stopping_eps=1.0E-6, max_iter=300, damping=0.5)
     assert np.isclose(np.linalg.norm(t1f), 0)
     assert np.isclose(np.linalg.norm(l1f), 0)
     print("{: 5.15f} HF Energy ".format(hf_energy))
@@ -219,7 +225,7 @@ def solve_cc_equations(soei, astei):
     g = astei.transpose(0, 1, 3, 2)
     t1z, t2z = np.zeros((nsvirt, nsocc)), np.zeros((nsvirt, nsvirt, nsocc, nsocc))
     t1f, t2f, l1f, l2f = kernel(t1z, t2z, fock, g, o, v, e_ai, e_abij,
-                                stopping_eps=1.0E-6)
+                                stopping_eps=1.0E-6, damping=0.5, max_iter=300)
     assert np.isclose(np.linalg.norm(t1f), 0)
     assert np.isclose(np.linalg.norm(l1f), 0)
     print("{: 5.15f} HF Energy ".format(hf_energy))
@@ -249,33 +255,22 @@ def doci_vec_to_full_space_pyscf(doci_vec, doci_index, n_qubits):
 
 def main():
     # set up couplings and simulation parameters
-    couplings = np.linspace(-0.3, 0.3, 20)
-    n_qubits = 4 # this is for the DOCI space so equivalent to spatial orbs
-
-
-    # Get projectors
-    n_projector = get_num_projector(n_qubits, n_qubits//2)
-    num_op = of.get_sparse_operator(of.number_operator(n_qubits))
-    n2_projector = get_num_projector(2 * n_qubits, n_qubits)
-    num_full_op = of.get_sparse_operator(of.number_operator(2 * n_qubits))
-    sz_projector = get_sz_projector(2 * n_qubits, 0)
-    doci_projector = get_doci_projector(2 * n_qubits, n_qubits)
+    couplings = np.linspace(-0.5, 1.5, 20)
+    n_qubits = 6# this is for the DOCI space so equivalent to spatial orbs
+    nmo = n_qubits
 
     # results storage
-    doci_energies = []
-    full_space_energies = []
     ccd_energies = []
     ccd_energies2 = []
-    super_conducting_correlator = []
-    fci_super_conducting_correlator = []
+    doci_energies = []
+    true_sc_order_parameter = []
+    ccd_sc_order_parameter = []
 
+    doci_projector, s0_basis = get_doci_projector(2 * n_qubits, n_qubits)
     # run through everything
     for g in couplings:
+        print("Coupling parameter ", g)
         ncr_h1, ncr_h2, ncr_fham = get_rg_fham(g, n_qubits)
-        fham = of.get_sparse_operator(ncr_fham).toarray().real
-        fham = fham[:, doci_projector.row]
-        fham = fham[doci_projector.row, :]
-        ncr_fham_eigs, ncr_fham_vecs = np.linalg.eigh(fham)
 
         # construct antisymmetric coefficient matrix
         # such that the operator commutes with antisymmeterizer
@@ -302,25 +297,36 @@ def main():
         afham = afham[:, doci_projector.row]
         afham = afham[doci_projector.row, :]
         ncr_afham_eigs, ncr_afham_vecs = np.linalg.eigh(afham)
+        doci_energies.append(ncr_afham_eigs[0])
+
+        full_space_wf = np.zeros((4 ** nmo), dtype=np.complex128)
+        for idx in range(len(s0_basis)):
+            full_space_wf[s0_basis[idx]] = ncr_afham_vecs[idx, 0]
+        # print wf
+        fqe_doci = fqe.from_cirq(full_space_wf.flatten(), thresh=1.0E-12)
+        fqe_doci.print_wfn()
+        # check S0 wf gives the same expectation value
+        fqe_fham = fqe.get_hamiltonian_from_openfermion(ncr_fham)
+        doci_energy = fqe_doci.expectationValue(fqe_fham)
+        assert np.isclose(doci_energy, ncr_afham_eigs[0])
 
         # get FCI RDMs
         fqe_wf = doci_vec_to_full_space_pyscf(ncr_afham_vecs[:, [0]].flatten(),
                                               doci_projector.row, 2 * n_qubits)
         fqe_wf.print_wfn()
 
-        # get superconducting correlator
-        fci_opdm, fci_tpdm = fqe_wf.sector((n_qubits, 0)).get_openfermion_rdms()
-        fci_phdm = of.map_two_pdm_to_particle_hole_dm(fci_tpdm, fci_opdm)
-        correlation_function = np.einsum('iiii', fci_phdm[::2, ::2, 1::2, 1::2]) - np.einsum('ii', fci_opdm[::2, ::2]) * np.einsum('ii', fci_opdm[1::2, 1::2])
-        correlation_function *= g
-        fci_super_conducting_correlator.append(correlation_function)
+        fqe_opdm, fqe_tpdm = fqe_wf.sector((n_qubits, 0)).get_openfermion_rdms()
+        true_num_fluctation = (2 / n_qubits) * np.sum(np.sqrt(np.diagonal(fqe_opdm) - np.diagonal(fqe_opdm)**2))
+        true_sc_order_parameter.append(true_num_fluctation)
 
-        print(ncr_afham_eigs)
+
         # print()
         # solve CCD equations
         cc_energy, lagrangian_energy, cc_opdm, cc_tpdm, cc_t1f, cc_t2f, cc_l1f, cc_l2f = solve_cc_equations(
             ncr_h1.astype(float), 4 * 0.5 * ncr_h2_antisymm.astype(float))
         ccd_energies.append(cc_energy)
+        ccd_num_fluctation = (2 / n_qubits) * np.sum(np.sqrt(np.diagonal(cc_opdm) - np.diagonal(cc_opdm)**2))
+        ccd_sc_order_parameter.append(ccd_num_fluctation)
 
         # Solving ccsd_v2
         nso = ncr_h1.shape[0]
@@ -345,37 +351,14 @@ def main():
         ccd_energies2.append(cc_energy)
 
 
-        doci_energies.append(ncr_afham_eigs)
-        full_space_energies.append(ncr_fham_eigs)
 
-        # Get correlation function from CC-equations
-        phdm = of.map_two_pdm_to_particle_hole_dm(cc_tpdm, cc_opdm)
-        correlation_function = np.einsum('iiii', phdm[::2, ::2, 1::2, 1::2]) - np.einsum('ii', cc_opdm[::2, ::2]) * np.einsum('ii', cc_opdm[1::2, 1::2])
-        correlation_function *= g
-        super_conducting_correlator.append(correlation_function)
-
-    qubit_doci_spectrum = np.array(doci_energies)
-    fermion_doci_spectrum = np.array(full_space_energies)
-    # # print(qubit_doci_spectrum)
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6.4, 4.8))
-    for ii in range(qubit_doci_spectrum.shape[-1]):
-        if ii == 0:
-            ax.plot(couplings, qubit_doci_spectrum[:, ii], 'k', linestyle='-', label='DOCI')
-            ax.plot(couplings, fermion_doci_spectrum[:, ii], 'k', linestyle='', marker='o', label='DOCI-full')
-        else:
-            ax.plot(couplings, qubit_doci_spectrum[:, ii], linestyle='-')
-            ax.plot(couplings, fermion_doci_spectrum[:, ii], linestyle='', marker='o')
-
-    ax.tick_params(which='both', labelsize=18, direction='in')
-    ax.set_xlabel("g", fontsize=18)
-    ax.set_ylabel(r"E", fontsize=18)
-    # ax.legend(loc='center right', fontsize=13, ncol=2)
-    plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
-    plt.savefig("doci_vs_qubit_doci.png", format='PNG', dpi=300)
-    plt.show()
+    np.save("RG_n_{}_gvalues.npy".format(n_qubits), couplings)
+    np.save("RG_n_{}_doci_energy.npy".format(n_qubits), np.array(doci_energies))
+    np.save("RG_n_{}_ccd_energies.npy".format(n_qubits), np.array(ccd_energies))
+    np.save("RG_n_{}_ccd_energies2.npy".format(n_qubits), np.array(ccd_energies2))
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6.4, 4.8))
-    ax.plot(couplings, qubit_doci_spectrum[:, 0], 'k', linestyle='-', label='DOCI')
+    ax.plot(couplings, doci_energies, 'k', linestyle='-', label='DOCI')
     ax.plot(couplings, ccd_energies,  marker='s', linestyle='None', label='CCSD-f-v', mfc='C0', mec='None')
     ax.plot(couplings, ccd_energies2, marker='o', linestyle='None', label='CCSD-h-g', mfc='C1', mec='None')
 
@@ -384,12 +367,12 @@ def main():
     ax.set_ylabel(r"E", fontsize=18)
     ax.legend(loc='center', fontsize=13, ncol=1, frameon=False)
     plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
-    plt.savefig("absolute_ccd_doci_energies.png", format='PNG', dpi=300)
+    plt.savefig("RG_n_{}_absolute_ccd_doci_energies.png".format(n_qubits), format='PNG', dpi=300)
     plt.show()
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6.4, 4.8))
-    ax.plot(couplings, np.array(ccd_energies).flatten() - qubit_doci_spectrum[:, 0].flatten(), 'C0o-', label='CCSD-f-v')
-    ax.plot(couplings, np.array(ccd_energies2).flatten() - qubit_doci_spectrum[:, 0].flatten(), 'C1o-', label='CCSD-h-g')
+    ax.plot(couplings, np.array(ccd_energies).flatten() - doci_energies, 'C0o-', label='CCSD-f-v')
+    ax.plot(couplings, np.array(ccd_energies2).flatten() - doci_energies, 'C1o-', label='CCSD-h-g')
     ax.tick_params(which='both', labelsize=18, direction='in')
     ax.set_xlabel("g", fontsize=18)
     ax.set_ylabel(r"$E - E_{\mathrm{exact}}$", fontsize=18)
@@ -397,19 +380,19 @@ def main():
     ax.legend(loc='upper right', fontsize=13, ncol=2)
     # plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
     plt.tight_layout()
-    plt.savefig("relative_ccd_doci_energies.png", format='PNG', dpi=300)
+    plt.savefig("RG_n_{}_relative_ccd_doci_energies.png".format(n_qubits), format='PNG', dpi=300)
     plt.show()
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6.4, 4.8))
-    ax.plot(couplings, super_conducting_correlator, 'C0o-', label='CCD')
-    ax.plot(couplings, fci_super_conducting_correlator, 'k-', label='FCI')
+    ax.plot(couplings, ccd_sc_order_parameter, 'C0o-', label='CCD')
+    ax.plot(couplings, true_sc_order_parameter, 'k-', label='FCI')
     ax.tick_params(which='both', labelsize=18, direction='in')
     ax.set_xlabel("g", fontsize=18)
     ax.set_ylabel(r"$\Delta_{b}$", fontsize=18)
     plt.axhline(0, color='k')
     ax.legend(loc='upper right', fontsize=13, ncol=2)
     plt.gcf().subplots_adjust(bottom=0.15, left=0.2)
-    plt.savefig("superconducting_correlation_l4.png", format='PNG', dpi=300)
+    plt.savefig("RG_n_{}_superconducting_correlation_l4.png".format(n_qubits), format='PNG', dpi=300)
     plt.show()
 
 

@@ -1048,7 +1048,7 @@ def doubles_residual(t1, t2, h, g, o, v):
 
 
 def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
-           stopping_eps=1.0E-8):
+           stopping_eps=1.0E-8, damping=None):
     """
 
     :param t1: spin-orbital t1 amplitudes (nvirt x nocc)
@@ -1093,8 +1093,12 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
             break
         else:
             # assign t1 and t2 and old_energy for next iteration
-            t1 = new_singles
-            t2 = new_doubles
+            if damping is None:
+               t1 = new_singles
+               t2 = new_doubles
+            else:
+                t1 = t1 * damping + new_singles * (1 - damping)
+                t2 = t2 * damping + new_doubles * (1 - damping)
             old_energy = current_energy
             print("\tIteration {: 5d}\t{: 5.15f}\t{: 5.15f}\t{: 5.15f}".format(idx, old_energy, delta_e, res_norm))
     else:
@@ -1138,8 +1142,13 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
             l2 = lnew_doubles
             break
         else:
-            l1 = lnew_singles
-            l2 = lnew_doubles
+            if damping is None:
+                l1 = lnew_singles
+                l2 = lnew_doubles
+            else:
+                l1 = l1 * damping + lnew_singles * (1 - damping)
+                l2 = l2 * damping + lnew_doubles * (1 - damping)
+
             old_energy = current_energy
             print("\tIteration {: 5d}\t{: 5.15f}\t{: 5.15f}\t{: 5.15f}\t{: 5.15f}".format(
                 idx, old_energy, delta_e,

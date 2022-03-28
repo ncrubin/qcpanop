@@ -747,7 +747,7 @@ def solve_cphf_rhf(mf, Lvo, max_cycle, tol, logger):
 
 
 if __name__ == '__main__':
-    from qcpanop.io import read_xyz
+    from qcpanop.mol_io import read_xyz
     sym, coords = read_xyz('FeP.xyz')
     geomlist = list(zip(sym, coords))
     mol = gto.Mole()

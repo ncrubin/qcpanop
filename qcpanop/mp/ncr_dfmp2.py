@@ -185,7 +185,7 @@ del(WITH_T2)
 if __name__ == '__main__':
     from pyscf import scf
     from pyscf import gto
-    from qcpanop.io import read_xyz
+    from qcpanop.mol_io import read_xyz
 
     sym, coords = read_xyz(xyz_file="dcb_tweezer.xyz")
     geom_list = list(zip(sym, coords))
