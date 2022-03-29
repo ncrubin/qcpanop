@@ -824,7 +824,7 @@ def kernel(t1, t2, fock, g, o, v, e_ai, e_abij, max_iter=100,
     :param stopping_eps: stopping criteria for residual l2-norm
     """
     if diis_size is not None:
-        from diis import DIIS
+        from qcpanop.cc.diis import DIIS
         diis_update = DIIS(diis_size, start_iter=diis_start_cycle)
         t1_dim = t1.size
         old_vec = np.hstack((t1.flatten(), t2.flatten()))
