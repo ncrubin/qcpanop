@@ -893,7 +893,7 @@ def kernel(t1, t2, fock, g, o, v, e_ai, e_abij, max_iter=100,
     l2 = t2.transpose(2, 3, 0, 1)
 
     if diis_size is not None:
-        from diis import DIIS
+        from qcpanop.cc.diis import DIIS
         diis_update = DIIS(diis_size, start_iter=diis_start_cycle)
         l1_dim = l1.size
         old_vec = np.hstack((l1.flatten(), l2.flatten()))
