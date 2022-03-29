@@ -1048,7 +1048,8 @@ def doubles_residual(t1, t2, h, g, o, v):
 
 
 def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
-           stopping_eps=1.0E-8, damping=None):
+           stopping_eps=1.0E-8, damping=None, diis_size=None,
+           diis_start_cycle=4):
     """
 
     :param t1: spin-orbital t1 amplitudes (nvirt x nocc)
@@ -1069,6 +1070,13 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
     fock_e_abij = np.reciprocal(e_abij)
     old_energy = ccsd_energy(t1, t2, h, g, o, v)
 
+    if diis_size is not None:
+        from qcpanop.cc.diis import DIIS
+        diis_update = DIIS(diis_size, start_iter=diis_start_cycle)
+        t1_dim = t1.size
+        old_vec = np.hstack((t1.flatten(), t2.flatten()))
+
+
     print("\tSolving T-quations")
     print("\tIteration num \t\tenergy\t\t\t\t\t\t|dE|\t\t\t||residual||")
     for idx in range(max_iter):
@@ -1082,6 +1090,17 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
 
         new_singles = singles_res * e_ai
         new_doubles = doubles_res * e_abij
+
+        if diis_size is not None:
+            vectorized_iterate = np.hstack(
+                (new_singles.flatten(), new_doubles.flatten()))
+            error_vec = old_vec - vectorized_iterate
+            new_vectorized_iterate = diis_update.compute_new_vec(vectorized_iterate,
+                                                                 error_vec)
+            new_singles = new_vectorized_iterate[:t1_dim].reshape(t1.shape)
+            new_doubles = new_vectorized_iterate[t1_dim:].reshape(t2.shape)
+            old_vec = new_vectorized_iterate
+
 
         current_energy = ccsd_energy(new_singles, new_doubles, h, g, o, v)
         delta_e = np.abs(old_energy - current_energy)
@@ -1115,6 +1134,13 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
 
     l1 = t1.transpose(1, 0)
     l2 = t2.transpose(2, 3, 0, 1)
+
+    if diis_size is not None:
+        from qcpanop.cc.diis import DIIS
+        diis_update = DIIS(diis_size, start_iter=diis_start_cycle)
+        l1_dim = l1.size
+        old_vec = np.hstack((l1.flatten(), l2.flatten()))
+
     # set old energy with initial l1 and l2
     old_energy = lagrangian_energy(t1, t2, l1, l2, h, g, o, v)
     # now solve for lambdas!
@@ -1131,6 +1157,16 @@ def kernel(t1, t2, h, g, o, v, e_ai, e_abij, max_iter=100,
         lnew_singles = lsingles_res * le_ai
         # lnew_singles = np.zeros_like(l1)
         lnew_doubles = ldoubles_res * le_abij
+
+        if diis_size is not None:
+            vectorized_iterate = np.hstack(
+                (lnew_singles.flatten(), lnew_doubles.flatten()))
+            error_vec = old_vec - vectorized_iterate
+            new_vectorized_iterate = diis_update.compute_new_vec(vectorized_iterate,
+                                                                 error_vec)
+            lnew_singles = new_vectorized_iterate[:l1_dim].reshape(l1.shape)
+            lnew_doubles = new_vectorized_iterate[l1_dim:].reshape(l2.shape)
+            old_vec = new_vectorized_iterate
 
         current_energy = lagrangian_energy(t1, t2, lnew_singles, lnew_doubles, h, g, o, v)
         pseudo_energy = einsum('jiab,jiab', g[o, o, v, v], l2)
