@@ -271,6 +271,7 @@ def main():
     for g in couplings:
         print("Coupling parameter ", g)
         ncr_h1, ncr_h2, ncr_fham = get_rg_fham(g, n_qubits)
+        print(ncr_fham)
 
         # construct antisymmetric coefficient matrix
         # such that the operator commutes with antisymmeterizer
@@ -298,6 +299,15 @@ def main():
         afham = afham[doci_projector.row, :]
         ncr_afham_eigs, ncr_afham_vecs = np.linalg.eigh(afham)
         doci_energies.append(ncr_afham_eigs[0])
+        print(ncr_afham_eigs[:10])
+
+        afham = of.get_sparse_operator(ncr_fham).toarray().real
+        afham = afham[:, doci_projector.row]
+        afham = afham[doci_projector.row, :]
+        ncr_afham_eigs, ncr_afham_vecs = np.linalg.eigh(afham)
+        doci_energies.append(ncr_afham_eigs[0])
+        print(ncr_afham_eigs[:10])
+
 
         full_space_wf = np.zeros((4 ** nmo), dtype=np.complex128)
         for idx in range(len(s0_basis)):

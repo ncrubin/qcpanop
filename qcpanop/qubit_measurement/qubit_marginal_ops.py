@@ -23,6 +23,8 @@ def qubit_marginal_op_basis(marginal_rank, qubits):
     n_qubits = len(qubits)
     for qs in combinations(range(n_qubits), marginal_rank):
         qs_sorted = tuple(sorted([qubits[qq] for qq in qs]))
+        # Construct pauli operator basis for this subset of qubits
+        # {I, X, Y, Z}^{|q-subset|}
         for pauli_term_per_qubit in product(range(4), repeat=len(qs)):
             paulistring = dict([(qubits[qs[qidx]], qubit_type[pauli_type]) for qidx, pauli_type in enumerate(pauli_term_per_qubit)])
             qubit_sets[qs_sorted].append(cirq.PauliString(paulistring))
@@ -49,13 +51,15 @@ def get_qubit_marginals_cirq(state, qubits, qubit_marginal_rank):
     return marginal_dict
 
 
-def get_qubit_marginals(state, qubits, qubit_marginal_rank):
+def get_qubit_marginals(state, qubits, qubit_marginal_rank) -> dict:
     """
     Calculate the qubit marginals for a state
 
-    :param state:
-    :param n_qubits:
-    :return:
+    :param state: state vector
+    :param n_qubits: total number of qubits
+    :param qubit_marginal_rank: rank of marginal to calculate
+    :return: dictionary where key is subset of qubits and value is marginal
+             density matrix
     """
     qubit_marginal_basis = qubit_marginal_op_basis(qubit_marginal_rank, qubits)
     marginal_dict = {}
@@ -70,13 +74,15 @@ def get_qubit_marginals(state, qubits, qubit_marginal_rank):
     return marginal_dict
 
 
-def get_qubit_marginal_expectations(state, qubits, qubit_marginal_rank):
+def get_qubit_marginal_expectations(state, qubits, qubit_marginal_rank) -> dict:
     """
     Calculate the qubit marginals for a state
 
-    :param state:
-    :param n_qubits:
-    :return:
+    :param state: state vector
+    :param n_qubits: total number of qubits
+    :param qubit_marginal_rank: rank of marginal to calculate
+    :return: dictionary where key is subset of qubits and value a dictionary
+             with keys as cirq.PauliString (P) and value as <psi|P|psi>
     """
     qubit_map = dict(zip(qubits, range(len(qubits))))
     qubit_marginal_basis = qubit_marginal_op_basis(qubit_marginal_rank, qubits)

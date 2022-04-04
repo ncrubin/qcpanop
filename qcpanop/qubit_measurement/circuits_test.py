@@ -1,17 +1,17 @@
-from .state_utils import get_random_state
-from .circuits import bell_measurement
+from qcpanop.qubit_measurement.state_utils import get_random_state
+from qcpanop.qubit_measurement.circuits import bell_measurement, create_measurement_circuit, zeta_circuit
 
 import numpy as np
 import cirq
 
 
-def test_bell_measurement():
+def test_bell_measurement_mathtest():
     """Test Bell measurements can simultaneously measure XX, YY, ZZ"""
     n_qubits = 4
     qubits = cirq.LineQubit.range(n_qubits)
     qubit_map = dict(zip(qubits, range(n_qubits)))
     bell_u = cirq.unitary(
-        bell_measurement(qubits[0], qubits[1], with_measuremet=False))
+        bell_measurement(qubits[0], qubits[1], with_measurements=False))
     state2q = get_random_state(2)
     state2qc = state2q.reshape((-1, 1))
     state2qcb = bell_u @ state2qc
@@ -51,4 +51,35 @@ def test_bell_measurement():
     assert np.isclose(tval3, tval1)
     assert np.isclose(tval4, tval1)
 
+def tes_bell_measurement_unitary():
+    n_qubits = 4
+    qubits = cirq.LineQubit.range(n_qubits)
+    qubit_map = dict(zip(qubits, range(n_qubits)))
+    bell_u = cirq.unitary(
+        zeta_circuit(qubits[1]) + bell_measurement(ancilla_qubit=qubits[1],
+                                                   system_qubit=qubits[0],
+                                                   with_measurements=False))
 
+    bell_u_test = create_measurement_circuit([qubits[0]],
+                                             {qubits[0]: qubits[1]},
+                                             compile=False)
+    bell_u_test = cirq.unitary(bell_u_test)
+    assert np.isclose(abs(np.trace(bell_u_test.conj().T @ bell_u)), 4)
+
+    n_qubits = 4
+    qubits = cirq.LineQubit.range(2*n_qubits)
+    system_qubits = qubits[:n_qubits]
+    ancilla_qubits = qubits[n_qubits:]
+    qubit_map = dict(zip(system_qubits, ancilla_qubits))
+    measurement_bell = cirq.Circuit()
+    for sys_q, anc_q in zip(system_qubits, ancilla_qubits):
+        measurement_bell += zeta_circuit(anc_q)
+        measurement_bell += bell_measurement(ancilla_qubit=anc_q,
+                                             system_qubit=sys_q,
+                                             with_measurements=False)
+    bell_u = cirq.unitary(measurement_bell)
+
+    bell_u_test = create_measurement_circuit(system_qubits=system_qubits,
+                                             sys_to_ancilla_map=qubit_map)
+    bell_u_test = cirq.unitary(bell_u_test)
+    assert np.isclose(abs(np.trace(bell_u_test.conj().T @ bell_u)), 4**n_qubits)
