@@ -469,9 +469,9 @@ def main():
 
             vsg_local = Get_Local_Pseudopotential_GTH(g2[inds],c1,c2,c3,c4,rloc,Zion)
 
-            vsg_non_local = Get_NonLocal_PseudoPotential_GTH(sphg,pg,aa,hgth)
+            vsg_non_local = Get_NonLocal_PseudoPotential_GTH(sphg,pg,aa,hgth)[aa:]
 
-            gth_pseudopotential[aa,:] = ( vsg_local + vsg_non_local ) * sg[inds]
+            gth_pseudopotential[aa,aa:] = ( vsg_local + vsg_non_local ) * sg[inds]
 
 if __name__ == "__main__":
     main()
