@@ -206,6 +206,8 @@ class BellBasisKMarginalSampler:
 
     def measure_marginals(self):
         # do the measurement of the bell basis Z-terms
+        print(self.circuit_plus_bell_meas_circuit)
+        exit()
         bb_measured_results = self.measure_observables_func(
             circuit=self.circuit_plus_bell_meas_circuit,
             observables=self.bb_terms_to_measure,
