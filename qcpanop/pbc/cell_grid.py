@@ -23,7 +23,7 @@ def Get_Local_Pseudopotential_GTH(g2,c1,c2,c3,c4,rloc,Zion):
 
     Construct and return local contribution to GTH pseudopotential
 
-    :param g2: square of plane wave basis
+    :param g2: square modulus of plane wave basis functions
     :param c1: GTH pseudopotential parameter, c1
     :param c2: GTH pseudopotential parameter, c2
     :param c3: GTH pseudopotential parameter, c3
@@ -57,7 +57,7 @@ def Get_Spherical_Harmonics_and_Projectors_GTH(gv,rl,lmax,imax):
 
     Construct spherical harmonics and projectors for GTH pseudopotential
 
-    :param gv: plane wave basis plus kpt
+    :param gv: plane wave basis functions plus kpt
     :param rl: list of [rs, rp]
     :param lmax: maximum angular momentum, l
     :param imax: maximum i for projectors
@@ -66,17 +66,19 @@ def Get_Spherical_Harmonics_and_Projectors_GTH(gv,rl,lmax,imax):
 
     rgv,thetagv,phigv=pbcgto.pseudo.pp.cart2polar(gv)
 
-    mmax=2*(lmax-1)+1
-    gmax=len(gv)
-    spherical_harmonics_lm=np.zeros((lmax,mmax,gmax),dtype='complex128')
-    projector_li=np.zeros((lmax,imax,gmax),dtype='complex128')
+    mmax = 2*(lmax-1)+1
+    gmax = len(gv)
+
+    spherical_harmonics_lm = np.zeros((lmax,mmax,gmax),dtype='complex128')
+    projector_li           = np.zeros((lmax,imax,gmax),dtype='complex128')
+
     for l in range(lmax):
         for m in range(-l,l+1):
-            spherical_harmonics_lm[l,m+l,:]=scipy.special.sph_harm(m,l,phigv,thetagv)
+            spherical_harmonics_lm[l,m+l,:] = scipy.special.sph_harm(m,l,phigv,thetagv)
         for i in range(imax):
-            projector_li[l,i,:]=pbcgto.pseudo.pp.projG_li(rgv,l,i,rl[l])
+            projector_li[l,i,:] = pbcgto.pseudo.pp.projG_li(rgv,l,i,rl[l])
 
-    return spherical_harmonics_lm,projector_li
+    return spherical_harmonics_lm, projector_li
 
 def Get_NonLocal_PseudoPotential_GTH(sphg,pg,gind,hgth):
     """
@@ -86,26 +88,24 @@ def Get_NonLocal_PseudoPotential_GTH(sphg,pg,gind,hgth):
     :param sphg: angular part of plane wave basis
     :param pg: projectors 
     :param gind: plane wave basis function label 
-    :param hgth: GTH pseudopotential parameter, hli
+    :param hgth: GTH pseudopotential parameter, hlij
     :return: non-local contribution to GTH pseudopotential
     """
 
-    vsg=0.
+    vsg = 0.0
     for l in [0,1]:
-        vsgij=vsgsp=0.
+        vsgij = vsgsp = 0.0
         for i in [0,1]:
             for j in [0,1]:
                 #vsgij+=thepow[l]*pg[l,i,gind]*hgth[l,i,j]*pg[l,j,:]
-                vsgij+=pg[l,i,gind]*hgth[l,i,j]*pg[l,j,:]
-                print(l,i,j,hgth[l,i,j])
+                vsgij += pg[l,i,gind] * hgth[l,i,j] * pg[l,j,:]
+
         for m in range(-l,l+1):
-            vsgsp+=sphg[l,m+l,gind]*sphg[l,m+l,:].conj()
-        vsg+=vsgij*vsgsp
+            vsgsp += sphg[l,m+l,gind] * sphg[l,m+l,:].conj()
+
+        vsg += vsgij * vsgsp
 
     return vsg/omega
-
-
-
 
 
 def get_SI(cell, Gv=None):
@@ -408,37 +408,51 @@ def main():
     # define GTH parameters:
 
     # parameters for local contribution to pseudopotential (for Si)
-    c1=-7.336103
-    c2=0.0
-    c3=0.0
-    c4=0.0
-    rloc=0.44
-    Zion=4.0
+    c1   = -7.336103
+    c2   =  0.0
+    c3   =  0.0
+    c4   =  0.0
+    rloc =  0.44
+    Zion =  4.0
 
     # parameters for non-local contribution to pseudopotential (for Si)
 
-    # hli
-    hgth=np.zeros((2,3,3),dtype='float64')
-    hgth[0,0,0]=5.906928
-    hgth[0,1,1]=3.258196
-    hgth[0,0,1]=hgth[0,1,0]=-0.5*np.sqrt(3./5.)*hgth[0,1,1]
-    hgth[1,0,0]=2.727013
+    # hlij
+    hgth = np.zeros((2,3,3),dtype='float64')
+    hgth[0,0,0] = 5.906928
+    hgth[0,1,1] = 3.258196
+    hgth[0,0,1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
+    hgth[0,1,0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
+    hgth[1,0,0] = 2.727013
 
     # rs, rp, max l, max i
-    r0=0.422738
-    r1=0.484278
-    rl=[r0,r1]
-    lmax=2
-    imax=2
+    r0   = 0.422738
+    r1   = 0.484278
+    rl   = [r0,r1]
+    lmax = 2
+    imax = 2
 
     # lattice constant
-    lc=10.26 
+    lc = 10.26 
 
-    sg=np.zeros(len(g),dtype='complex128')
+    sg = np.zeros(len(g),dtype='complex128')
     for i in range(len(g)):
         sg[i] = 2.0 * np.cos(np.dot(g[i],np.array([lc,lc,lc])/8.0))
 
-    for j in range(nk):
+    """ 
+    need to define:
+
+    k     = k-points [from GetMP() in gkclab/tickle]
+    npw   = number of plane wave basis functions for each  k-point [from GetK() in gkclab/tickle]
+    indgk = for each k-point, the index of the G vectors in contained in g [from GetK()]
+    g     = the plane waves [from  GetGrids() in gkclab/tickle]
+    g2    = the square modulus of the plane waves [from  GetGrids()]
+    mill  = list of miller indices for G vectors [from GetGrids()]
+    nm    = maximum dimension for reciprocal basis
+
+    """
+
+    for j in range(len(k)):
     
         gth_pseudopotential = np.zeros((npw[j],npw[j]),dtype='complex128')
 
