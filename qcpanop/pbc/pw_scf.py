@@ -558,11 +558,16 @@ def main():
     for i in range(len(g)):
         sg[i] = 2.0 * np.cos(np.dot(g[i], np.array([lattice_constant, lattice_constant, lattice_constant]) / 8.0))
 
+
     # todo: potential
     vg = np.zeros(len(g), dtype = 'float64')
 
     for j in range(len(k)):
+
+        # fock matrix
+        fock = np.zeros((n_plane_waves_per_k[j], n_plane_waves_per_k[j]), dtype='complex128')
     
+        # pseudopotential
         gth_pseudopotential = np.zeros((n_plane_waves_per_k[j], n_plane_waves_per_k[j]), dtype='complex128')
 
         gkind = kg_to_g[j, :n_plane_waves_per_k[j]]
@@ -582,13 +587,17 @@ def main():
 
             gth_pseudopotential[aa, aa:] = ( vsg_local + vsg_nonlocal ) * sg[inds]
 
-        # potential plus pseudopotential
-        hmat = gth_pseudopotential + vg
+            # F = V
+            fock[aa, aa:] = vg[inds]
 
-        # add kinetic energy
+
+        # F = V + PP
+        fock += gth_pseudopotential
+
+        # F = V + PP + T
         kgtmp = k[j] + g[gkind]
-        diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + hmat.diagonal()
-        np.fill_diagonal(hmat, diagonals)
+        diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
+        np.fill_diagonal(fock, diagonals)
 
 
 if __name__ == "__main__":
