@@ -282,38 +282,6 @@ def get_nuc(mydf, kpts=None):
     # return potential
 
 
-def get_pp(cell):
-    from pyscf.pbc.gto.pseudo.pp import get_vlocG, get_gth_projG
-    vlocG = get_vlocG(cell, Gv=cell.Gv)  # get VlocG for each atom! n_atoms x n_G
-
-    hs, projs = get_gth_projG(cell, cell.Gv)
-    #print(hs)
-    #print(projs[0][0][0][0]) # [atm][l][m][i][ ngrids ]
-    #print(len(projs))  # atoms
-    #print(len(projs[0])) # num_non-local projectors angular moment l
-    #print(projs[0][1])
-
-    print(hs)
-    for ia in range(cell.natm):
-        symb = cell.atom_symbol(ia)
-        if symb not in cell._pseudo:
-            continue
-        print("sym ", symb)
-        pp = cell._pseudo[symb]
-        print(pp)
-        for l, proj in enumerate(pp[5:]):
-            print("l ", l, " proj ", proj)
-            rl, nl, hl = proj
-            hl = np.asarray(hl)
-            h_mat_to_print = np.zeros((3, 3), dtype=hl.dtype)
-            h_mat_to_print[:hl.shape[0], :hl.shape[1]] = hl
-            print(h_mat_to_print)
-                # pYlm = np.empty((nl,l*2+1,ngrids))
-                # for k in range(nl):
-                #     qkl = _qli(G_rad*rl, l, k)
-
-    #exit()
-
 def get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff, cell_dimension = 3, distance_units = 'B'):
 
     """
@@ -449,7 +417,7 @@ def get_plane_wave_basis(energy_cutoff, a, h):
                     miller = np.concatenate( (miller, np.expand_dims(np.array([i, j, k]), axis = 0) ) ) 
 
     # reciprocal_max_dim contains the maximum dimension for reciprocal basis
-    reciprocal_max_dim=[int(np.amax(miller[:, 0])), int(np.amax(miller[:, 1])), int(np.amax(miller[:, 2]))]
+    reciprocal_max_dim = [int(np.amax(miller[:, 0])), int(np.amax(miller[:, 1])), int(np.amax(miller[:, 2]))]
 
     # real_space_grid_dim is the real space grid dimensions
     real_space_grid_dim = [2 * reciprocal_max_dim[0] + 1, 2 * reciprocal_max_dim[1] + 1, 2 * reciprocal_max_dim[2] + 1]
@@ -590,6 +558,9 @@ def main():
     for i in range(len(g)):
         sg[i] = 2.0 * np.cos(np.dot(g[i], np.array([lattice_constant, lattice_constant, lattice_constant]) / 8.0))
 
+    # todo: potential
+    vg = np.zeros(len(g), dtype = 'float64')
+
     for j in range(len(k)):
     
         gth_pseudopotential = np.zeros((n_plane_waves_per_k[j], n_plane_waves_per_k[j]), dtype='complex128')
@@ -610,6 +581,15 @@ def main():
             vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, hgth, omega)[aa:]
 
             gth_pseudopotential[aa, aa:] = ( vsg_local + vsg_nonlocal ) * sg[inds]
+
+        # potential plus pseudopotential
+        hmat = gth_pseudopotential + vg
+
+        # add kinetic energy
+        kgtmp = k[j] + g[gkind]
+        diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + hmat.diagonal()
+        np.fill_diagonal(hmat, diagonals)
+
 
 if __name__ == "__main__":
     main()
