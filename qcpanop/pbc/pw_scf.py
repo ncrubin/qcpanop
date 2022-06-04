@@ -20,8 +20,36 @@ import pyscf.pbc.tools.pyscf_ase as pyscf_ase
 
 import scipy
 
+# GTH pseudopotential parameters
+class gth_pseudopotential_parameters():
 
-def get_local_pseudopotential_gth(g2, omega, c1, c2, c3, c4, rloc, Zion, epsilon = 1e-8):
+    # parameters for local contribution to pseudopotential (default Si)
+
+    c1 = -7.336103
+    c2 = 0.0
+    c3 = 0.0
+    c4 = 0.0
+    rloc = 0.44
+    Zion = 4.0
+
+    # parameters for non-local contribution to pseudopotential (default Si)
+
+    # hlij
+    hgth = np.zeros((2,3,3),dtype='float64')
+    hgth[0, 0, 0] = 5.906928
+    hgth[0, 1, 1] = 3.258196
+    hgth[0, 0, 1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
+    hgth[0, 1, 0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
+    hgth[1, 0, 0] = 2.727013
+
+    # rs, rp, max l, max i
+    r0 = 0.422738
+    r1 = 0.484278
+    rl = [r0, r1]
+    lmax = 2
+    imax = 2
+
+def get_local_pseudopotential_gth(g2, omega, gth_params, epsilon = 1e-8):
 
     """
 
@@ -29,14 +57,16 @@ def get_local_pseudopotential_gth(g2, omega, c1, c2, c3, c4, rloc, Zion, epsilon
 
     :param g2: square modulus of plane wave basis functions
     :param omega: unit cell volume
-    :param c1: GTH pseudopotential parameter, c1
-    :param c2: GTH pseudopotential parameter, c2
-    :param c3: GTH pseudopotential parameter, c3
-    :param c4: GTH pseudopotential parameter, c4
-    :param rloc: GTH pseudopotential parameter, rloc
-    :param Zion: ion charge
+    :param gth_params: GTH pseudopotential parameters
     :return: local contribution to GTH pseudopotential
     """
+
+    c1 = gth_params.c1
+    c2 = gth_params.c2
+    c3 = gth_params.c3
+    c4 = gth_params.c4
+    rloc = gth_params.rloc
+    Zion = gth_params.Zion
 
     vsg = np.zeros(len(g2),dtype='float64')
     largeind = g2 > epsilon
@@ -60,18 +90,24 @@ def get_local_pseudopotential_gth(g2, omega, c1, c2, c3, c4, rloc, Zion, epsilon
 
     return vsg / omega
 
-def get_spherical_harmonics_and_projectors_gth(gv,rl,lmax,imax):
+def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
+
 
     """
 
     Construct spherical harmonics and projectors for GTH pseudopotential
 
     :param gv: plane wave basis functions plus kpt
+    :param gth_params: GTH pseudopotential parameters
     :param rl: list of [rs, rp]
     :param lmax: maximum angular momentum, l
     :param imax: maximum i for projectors
     :return: spherical harmonics and projectors for GTH pseudopotential
     """
+
+    rl = gth_params.rl
+    lmax = gth_params.lmax
+    imax = gth_params.imax
 
     rgv,thetagv,phigv=pbcgto.pseudo.pp.cart2polar(gv)
 
@@ -89,7 +125,7 @@ def get_spherical_harmonics_and_projectors_gth(gv,rl,lmax,imax):
 
     return spherical_harmonics_lm, projector_li
 
-def get_nonlocal_pseudopotential_gth(sphg, pg, gind, hgth, omega):
+def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
 
     """
 
@@ -98,10 +134,12 @@ def get_nonlocal_pseudopotential_gth(sphg, pg, gind, hgth, omega):
     :param sphg: angular part of plane wave basis
     :param pg: projectors 
     :param gind: plane wave basis function label 
-    :param hgth: GTH pseudopotential parameter, hlij
+    :param gth_params: GTH pseudopotential parameters
     :param omega: unit cell volume
     :return: non-local contribution to GTH pseudopotential
     """
+
+    hgth = gth_params.hgth
 
     vsg = 0.0
     for l in [0,1]:
@@ -434,8 +472,47 @@ def get_plane_wave_basis(energy_cutoff, a, h):
 
     return g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g
 
+# plane wave basis information
+class plane_wave_basis():
 
-def get_plane_waves_per_k(energy_cutoff,k,g):
+    def __init__(self, energy_cutoff, a, h, k):
+
+        """
+
+        plane wave basis information
+
+        :param energy_cuttoff: kinetic energy cutoff (in atomic units)
+        :param a: lattice vectors
+        :param h: reciprocal lattice vectors
+        :param k: k-points
+
+        members:
+
+        g: plane waves
+        g2: square modulus of plane waves
+        miller: the miller labels for plane waves, 
+        reciprocal_max_dim: the maximum dimensions of the reciprocal basis,
+        real_space_grid_dim: the number of real-space grid points, and 
+        miller_to_g: a map between miller indices and a single index identifying the basis function
+        n_plane_waves_per_k: number of plane wave basis functions per k-point
+        kg_to_g: a map between basis functions for a given k-point and the original set of plane wave basis functions
+
+        """
+
+        g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g = get_plane_wave_basis(energy_cutoff, a, h)
+        n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(energy_cutoff, k, g)
+
+        self.g = g
+        self.g2 = g2
+        self.miller = miller
+        self.reciprocal_max_dim = reciprocal_max_dim
+        self.real_space_grid_dim = real_space_grid_dim
+        self.miller_to_g = miller_to_g
+        self.n_plane_waves_per_k = n_plane_waves_per_k
+        self.kg_to_g = kg_to_g
+
+
+def get_plane_waves_per_k(energy_cutoff, k, g):
 
     """
    
@@ -507,83 +584,48 @@ def main():
     #
     k, a, h, omega = get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff)
 
-    # get:
-    #
-    # plane waves, their square modulus, 
-    # the miller labels for plane waves, 
-    # the maximum dimensions of the reciprocal basis,
-    # the number of real-space grid points, and 
-    # a map between miller indices and a single index identifying the basis function
-    #
-    g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g = get_plane_wave_basis(energy_cutoff, a, h)
-
-    # get:
-    #
-    # number of plane wave basis functions per k-point
-    # a map between basis functions for a given k-point and the original set of plane wave basis functions
-    #
-    n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(energy_cutoff, k, g)
+    # get plane wave basis information
+    basis = plane_wave_basis(energy_cutoff, a, h, k)
 
     # get GTH pseudopotential matrix
 
-    # define GTH parameters:
-
-    # parameters for local contribution to pseudopotential (for Si)
-    c1 = -7.336103
-    c2 = 0.0
-    c3 = 0.0
-    c4 = 0.0
-    rloc = 0.44
-    Zion = 4.0
-
-    # parameters for non-local contribution to pseudopotential (for Si)
-
-    # hlij
-    hgth = np.zeros((2,3,3),dtype='float64')
-    hgth[0, 0, 0] = 5.906928
-    hgth[0, 1, 1] = 3.258196
-    hgth[0, 0, 1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-    hgth[0, 1, 0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-    hgth[1, 0, 0] = 2.727013
-
-    # rs, rp, max l, max i
-    r0 = 0.422738
-    r1 = 0.484278
-    rl = [r0, r1]
-    lmax = 2
-    imax = 2
-
     # todo: correct structure factor
-    sg = np.zeros(len(g), dtype='complex128')
-    for i in range(len(g)):
-        sg[i] = 2.0 * np.cos(np.dot(g[i], np.array([lattice_constant, lattice_constant, lattice_constant]) / 8.0))
+    sg = np.zeros(len(basis.g), dtype='complex128')
+    for i in range(len(basis.g)):
+        sg[i] = 2.0 * np.cos(np.dot(basis.g[i], np.array([lattice_constant, lattice_constant, lattice_constant]) / 8.0))
 
+    # pseudopotential parameters (default Si)
+    gth_params = gth_pseudopotential_parameters()
 
     # todo: potential
-    vg = np.zeros(len(g), dtype = 'float64')
+    vg = np.zeros(len(basis.g), dtype = 'float64')
 
     for j in range(len(k)):
 
+        print('hi',basis.n_plane_waves_per_k[j])
+
         # fock matrix
-        fock = np.zeros((n_plane_waves_per_k[j], n_plane_waves_per_k[j]), dtype='complex128')
+        fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype='complex128')
+
+        #get_gth_pseudopotential(k[j], g2, g
     
         # pseudopotential
-        gth_pseudopotential = np.zeros((n_plane_waves_per_k[j], n_plane_waves_per_k[j]), dtype='complex128')
+        gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype='complex128')
 
-        gkind = kg_to_g[j, :n_plane_waves_per_k[j]]
-        gk = g[gkind]
+        gkind = basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]
+        gk = basis.g[gkind]
 
-        sphg, pg = get_spherical_harmonics_and_projectors_gth(k[j]+gk,rl,lmax,imax)
+        sphg, pg = get_spherical_harmonics_and_projectors_gth(k[j]+gk,gth_params)
 
-        for aa in range(n_plane_waves_per_k[j]):
+        for aa in range(basis.n_plane_waves_per_k[j]):
 
-            ik = kg_to_g[j][aa]
-            gdiff = miller[ik] - miller[gkind[aa:]] + np.array(reciprocal_max_dim)
-            inds = miller_to_g[gdiff.T.tolist()]
+            ik = basis.kg_to_g[j][aa]
+            gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
+            inds = basis.miller_to_g[gdiff.T.tolist()]
 
-            vsg_local = get_local_pseudopotential_gth(g2[inds], omega, c1, c2, c3, c4, rloc, Zion)
+            vsg_local = get_local_pseudopotential_gth(basis.g2[inds], omega, gth_params)
 
-            vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, hgth, omega)[aa:]
+            vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, gth_params, omega)[aa:]
 
             gth_pseudopotential[aa, aa:] = ( vsg_local + vsg_nonlocal ) * sg[inds]
 
@@ -595,9 +637,11 @@ def main():
         fock += gth_pseudopotential
 
         # F = V + PP + T
-        kgtmp = k[j] + g[gkind]
+        kgtmp = k[j] + basis.g[gkind]
         diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
         np.fill_diagonal(fock, diagonals)
+
+        assert np.isclose(24.132725572695584, np.linalg.norm(fock))
 
 
 if __name__ == "__main__":
