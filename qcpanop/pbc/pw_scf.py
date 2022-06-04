@@ -157,6 +157,44 @@ def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
     return vsg / omega
 
 
+def get_gth_pseudopotential(basis, gth_params, k, kid, omega, sg):
+
+    """
+
+    get the GTH pseudopotential matrix
+
+    :param basis: plane wave basis information
+    :param gth_params: GTH pseudopotential parameters
+    :param k: the list of k-points
+    :param kid: index for a given k-point
+    :param omega: the cell volume
+    :param sg: the structure factor
+    :return gth_pseudopotential: the GTH pseudopotential matrix
+
+    """
+
+    gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
+
+    gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
+    gk = basis.g[gkind]
+
+    sphg, pg = get_spherical_harmonics_and_projectors_gth(k[kid]+gk,gth_params)
+
+    for aa in range(basis.n_plane_waves_per_k[kid]):
+
+        ik = basis.kg_to_g[kid][aa]
+        gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
+        inds = basis.miller_to_g[gdiff.T.tolist()]
+
+        vsg_local = get_local_pseudopotential_gth(basis.g2[inds], omega, gth_params)
+
+        vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, gth_params, omega)[aa:]
+
+        gth_pseudopotential[aa, aa:] = ( vsg_local + vsg_nonlocal ) * sg[inds]
+
+    return gth_pseudopotential
+
+
 def get_SI(cell, Gv=None):
     '''Calculate the structure factor (0D, 1D, 2D, 3D) for all atoms;
     see MH (3.34).
@@ -602,42 +640,17 @@ def main():
 
     for j in range(len(k)):
 
-        print('hi',basis.n_plane_waves_per_k[j])
-
         # fock matrix
         fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype='complex128')
 
-        #get_gth_pseudopotential(k[j], g2, g
-    
         # pseudopotential
-        gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype='complex128')
-
-        gkind = basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]
-        gk = basis.g[gkind]
-
-        sphg, pg = get_spherical_harmonics_and_projectors_gth(k[j]+gk,gth_params)
-
-        for aa in range(basis.n_plane_waves_per_k[j]):
-
-            ik = basis.kg_to_g[j][aa]
-            gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
-            inds = basis.miller_to_g[gdiff.T.tolist()]
-
-            vsg_local = get_local_pseudopotential_gth(basis.g2[inds], omega, gth_params)
-
-            vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, gth_params, omega)[aa:]
-
-            gth_pseudopotential[aa, aa:] = ( vsg_local + vsg_nonlocal ) * sg[inds]
-
-            # F = V
-            fock[aa, aa:] = vg[inds]
-
+        gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega, sg)
 
         # F = V + PP
         fock += gth_pseudopotential
 
         # F = V + PP + T
-        kgtmp = k[j] + basis.g[gkind]
+        kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
         diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
         np.fill_diagonal(fock, diagonals)
 
