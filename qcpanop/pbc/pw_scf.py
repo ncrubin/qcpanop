@@ -49,7 +49,7 @@ class gth_pseudopotential_parameters():
     lmax = 2
     imax = 2
 
-def get_local_pseudopotential_gth(g2, omega, gth_params, epsilon = 1e-8):
+def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
 
     """
 
@@ -69,8 +69,8 @@ def get_local_pseudopotential_gth(g2, omega, gth_params, epsilon = 1e-8):
     Zion = gth_params.Zion
 
     vsg = np.zeros(len(g2),dtype='float64')
-    largeind = g2 > epsilon
-    smallind = g2 <= epsilon #|G|^2->0 limit
+    largeind = g2 > tiny
+    smallind = g2 <= tiny #|G|^2->0 limit
 
     g2 = g2[largeind]
 
@@ -600,6 +600,35 @@ def get_plane_waves_per_k(energy_cutoff, k, g):
     return n_plane_waves_per_k, kg_to_g
 
 
+def get_miller_indices(idx, basis):
+
+    """
+
+    get miller indices from composite label
+
+    :param idx: composite index
+    :param basis: plane wave basis information
+
+    :return m1: miller index 1
+    :return m2: miller index 2
+    :return m3: miller index 3
+
+    """
+
+    m1 = basis.miller[idx,0]
+    m2 = basis.miller[idx,1]
+    m3 = basis.miller[idx,2]
+
+    if m1 < 0:
+        m1 = m1 + basis.real_space_grid_dim[0]
+    if m2 < 0:
+        m2 = m2 + basis.real_space_grid_dim[1]
+    if m3 < 0:
+        m3 = m3 + basis.real_space_grid_dim[2]
+
+    return m1, m2, m3
+
+
 def main():
 
     # material definition
@@ -613,19 +642,11 @@ def main():
     # desired number of k-points in each direction
     n_k_points = [1, 1, 1]
 
-    # get:
-    #
-    # k-points, 
-    # lattice vectors, 
-    # reciprocal latice vectors, 
-    # and cell volume
-    #
+    # get k-points, lattiice vectors, reciprocal lattice vectors, and cell volume
     k, a, h, omega = get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff)
 
     # get plane wave basis information
     basis = plane_wave_basis(energy_cutoff, a, h, k)
-
-    # get GTH pseudopotential matrix
 
     # todo: correct structure factor
     sg = np.zeros(len(basis.g), dtype='complex128')
@@ -638,23 +659,85 @@ def main():
     # todo: potential
     vg = np.zeros(len(basis.g), dtype = 'float64')
 
-    for j in range(len(k)):
+    # maximum number of iterations
+    maxiter = 100
 
-        # fock matrix
-        fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype='complex128')
+    # number of bands, TODO: be less arbitrary
+    nbands = 4
 
-        # pseudopotential
-        gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega, sg)
+    print("")
+    print("    ==> Begin SCF <==")
+    print("")
 
-        # F = V + PP
-        fock += gth_pseudopotential
+    tiny = 1e-8
 
-        # F = V + PP + T
-        kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
-        diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
-        np.fill_diagonal(fock, diagonals)
+    rhog = np.zeros(len(basis.g), dtype = 'float64')
 
-        assert np.isclose(24.132725572695584, np.linalg.norm(fock))
+    # begin SCF iterations
+    for i in range(0,maxiter):
+
+        rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+ 
+        # loop over k-points
+        for j in range( len(k) ):
+
+            # form fock matrix
+            fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+
+            # get pseudopotential
+            gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega, sg)
+
+            # F = V + PP
+            fock += gth_pseudopotential
+
+            # F = V + PP + T
+            kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
+            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
+            np.fill_diagonal(fock, diagonals)
+
+            # TODO add DFT, coulomb potentials
+
+            assert np.isclose(24.132725572695584, np.linalg.norm(fock))
+
+            # diagonalize fock matrix
+            epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbands-1))
+
+            # build density 
+            for pp in range(nbands):
+
+                Cocc = np.zeros(basis.real_space_grid_dim,dtype='complex128')
+                for tt in range(basis.n_plane_waves_per_k[j]):
+                    ik = basis.kg_to_g[j][tt]
+                    Cocc[ get_miller_indices(ik, basis) ] = C[tt, pp]
+
+                Cocc = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(Cocc)
+
+                rho += ( 2.0 / len(k) ) * np.absolute(Cocc)**2.0
+
+        assert np.isclose(2.539489449059902, np.linalg.norm(rho))
+
+        # DFT potential
+        xalpha = 2.0 / 3.0
+        vr = -1.5 * xalpha * ( 3.0 * rho / np.pi )**( 1.0 / 3.0 )
+        tmp = np.fft.ifftn(vr)
+        for myg in range( len(basis.g) ):
+            vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] )
+
+        assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
+
+        # coulomb potential
+        tmp = np.fft.ifftn(rho)
+        for myg in range( len(basis.g) ):
+            rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
+            if ( basis.g2[myg] > tiny ):
+                vg[myg] += 4.0 * np.pi * rhog[myg] / basis.g2[myg]
+
+        assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
+
+        #largeind=g2>eps
+        #vg[largeind]+=4.*pi*rhog[largeind]/g2[largeind]
+        #print("Coulomb potential took", time.time()-Jtime, "seconds.")
+
 
 
 if __name__ == "__main__":
