@@ -194,6 +194,34 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega, sg):
 
     return gth_pseudopotential
 
+def get_potential(basis, k, kid, vg):
+
+    """
+
+    get the potential matrix for given k-point
+
+    :param basis: plane wave basis information
+    :param k: the list of k-points
+    :param kid: index for a given k-point
+    :param vg: full potential container
+    :return potential: the pseudopotential matrix
+
+    """
+
+    potential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
+
+    gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
+
+    for aa in range(basis.n_plane_waves_per_k[kid]):
+
+        ik = basis.kg_to_g[kid][aa]
+        gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
+        inds = basis.miller_to_g[gdiff.T.tolist()]
+
+        potential[aa, aa:] = vg[inds]
+
+    return potential
+
 
 def get_SI(cell, Gv=None):
     '''Calculate the structure factor (0D, 1D, 2D, 3D) for all atoms;
@@ -673,10 +701,16 @@ def main():
 
     rhog = np.zeros(len(basis.g), dtype = 'float64')
 
+    scf_iter = 0
+
+    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    print("    %5s %20s" % ('iter','|drho|'))
+
     # begin SCF iterations
     for i in range(0,maxiter):
 
-        rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+        new_rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
  
         # loop over k-points
         for j in range( len(k) ):
@@ -687,17 +721,19 @@ def main():
             # get pseudopotential
             gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega, sg)
 
+            # get potential
+            potential = get_potential(basis, k, j, vg)
+
             # F = V + PP
-            fock += gth_pseudopotential
+            fock += potential + gth_pseudopotential
 
             # F = V + PP + T
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
             np.fill_diagonal(fock, diagonals)
 
-            # TODO add DFT, coulomb potentials
-
-            assert np.isclose(24.132725572695584, np.linalg.norm(fock))
+            if scf_iter == 0 :
+                assert np.isclose(24.132725572695584, np.linalg.norm(fock))
 
             # diagonalize fock matrix
             epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbands-1))
@@ -712,33 +748,53 @@ def main():
 
                 Cocc = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(Cocc)
 
-                rho += ( 2.0 / len(k) ) * np.absolute(Cocc)**2.0
+                new_rho += ( 2.0 / len(k) ) * np.absolute(Cocc)**2.0
 
-        assert np.isclose(2.539489449059902, np.linalg.norm(rho))
+        if scf_iter == 0 :
+            assert np.isclose(2.539489449059902, np.linalg.norm(new_rho))
 
         # DFT potential
         xalpha = 2.0 / 3.0
-        vr = -1.5 * xalpha * ( 3.0 * rho / np.pi )**( 1.0 / 3.0 )
+        vr = -1.5 * xalpha * ( 3.0 * new_rho / np.pi )**( 1.0 / 3.0 )
         tmp = np.fft.ifftn(vr)
         for myg in range( len(basis.g) ):
             vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] )
-
-        assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
+ 
+        if scf_iter == 0:
+            assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
 
         # coulomb potential
-        tmp = np.fft.ifftn(rho)
+        tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
             rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
             if ( basis.g2[myg] > tiny ):
                 vg[myg] += 4.0 * np.pi * rhog[myg] / basis.g2[myg]
 
-        assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
+        if scf_iter == 0:
+            assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
 
-        #largeind=g2>eps
-        #vg[largeind]+=4.*pi*rhog[largeind]/g2[largeind]
-        #print("Coulomb potential took", time.time()-Jtime, "seconds.")
+        # convergence in density
+        rho_diff = new_rho - rho
+        rho_diff_norm = np.linalg.norm(rho_diff)
+        rho = new_rho
 
+        print("    %5i %20.12lf" %  (scf_iter,rho_diff_norm))
 
+        if ( rho_diff_norm < 1e-8 ) :
+            break
+
+        scf_iter += 1
+
+    if scf_iter == maxiter:
+        print('')
+        print('    SCF did not converge.')
+        print('')
+    else:
+        print('')
+        print('    SCF converged!')
+        print('')
+
+    #print(done',np.linalg.norm(rhog),np.linalg.norm(vg))
 
 if __name__ == "__main__":
     main()
