@@ -92,7 +92,6 @@ def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
 
 def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
 
-
     """
 
     Construct spherical harmonics and projectors for GTH pseudopotential
@@ -157,7 +156,7 @@ def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
     return vsg / omega
 
 
-def get_gth_pseudopotential(basis, gth_params, k, kid, omega, sg):
+def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
 
     """
 
@@ -168,7 +167,6 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega, sg):
     :param k: the list of k-points
     :param kid: index for a given k-point
     :param omega: the cell volume
-    :param sg: the structure factor
     :return gth_pseudopotential: the GTH pseudopotential matrix
 
     """
@@ -190,7 +188,9 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega, sg):
 
         vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, gth_params, omega)[aa:]
 
-        gth_pseudopotential[aa, aa:] = ( vsg_local + vsg_nonlocal ) * sg[inds]
+        gth_pseudopotential[aa, aa:] = 0.0
+        for I in range(0, len(basis.SI)):
+            gth_pseudopotential[aa, aa:] += ( vsg_local + vsg_nonlocal ) * basis.SI[I][inds]
 
     return gth_pseudopotential
 
@@ -224,167 +224,57 @@ def get_potential(basis, k, kid, vg):
 
 
 def get_SI(cell, Gv=None):
-    '''Calculate the structure factor (0D, 1D, 2D, 3D) for all atoms;
-    see MH (3.34).
 
-    S_{I}(G) = exp(iG.R_{I})
+    """
+    Calculate the structure factor for all atoms; see MH (3.34).
 
     Args:
-        cell : instance of :class:`Cell`
+        cell : instance of :clast:`Cell`
 
         Gv : (N,3) array
             G vectors
 
     Returns:
-        SI : (natm, ngrids) ndarray, dtype=np.complex128
+        SI : (natm, ngs) ndarray, dtype=np.complex128
             The structure factor for each atom at each G-vector.
-    '''
+    """
+
+    if Gv is None:
+        Gv = cell.get_Gv()
     coords = cell.atom_coords()
-    ngrids = np.prod(cell.mesh)
-    if Gv is None or Gv.shape[0] == ngrids:
-        # gets integer grid for Gv
-        basex, basey, basez = cell.get_Gv_weights(cell.mesh)[1]
-        b = cell.reciprocal_vectors()
-        rb = np.dot(coords, b.T)
-        SIx = np.exp(-1j*np.einsum('z,g->zg', rb[:,0], basex))
-        SIy = np.exp(-1j*np.einsum('z,g->zg', rb[:,1], basey))
-        SIz = np.exp(-1j*np.einsum('z,g->zg', rb[:,2], basez))
-        SI = SIx[:,:,None,None] * SIy[:,None,:,None] * SIz[:,None,None,:]
-        SI = SI.reshape(-1,ngrids)
-    else:
-        SI = np.exp(-1j*np.dot(coords, Gv.T))
+    SI = np.exp(-1j*np.dot(coords, Gv.T))
     return SI
 
+def get_nuclear_electronic_potential(cell, basis):
 
-def get_Gv(cell, mesh=None, **kwargs):
-    '''Calculate three-dimensional G-vectors for the cell; see MH (3.8).
-
-    Indices along each direction go as [0...N-1, -N...-1] to follow FFT convention.
-
-    Args:
-        cell : instance of :class:`Cell`
-
-    Returns:
-        Gv : (ngrids, 3) ndarray of floats
-            The array of G-vectors.
-    '''
-    if mesh is None:
-        mesh = cell.mesh
-    if 'gs' in kwargs:
-        warnings.warn('cell.gs is deprecated.  It is replaced by cell.mesh,'
-                      'the number of PWs (=2*gs+1) along each direction.')
-        mesh = [2*n+1 for n in kwargs['gs']]
-
-    gx = np.fft.fftfreq(mesh[0], 1./mesh[0])
-    gy = np.fft.fftfreq(mesh[1], 1./mesh[1])
-    gz = np.fft.fftfreq(mesh[2], 1./mesh[2])
-    gxyz = lib.cartesian_prod((gx, gy, gz))
-
-    b = cell.reciprocal_vectors()
-    Gv = lib.ddot(gxyz, b)
-    return Gv
-
-
-def get_uniform_grids(cell, mesh=None, **kwargs):
-    '''Generate a uniform real-space grid consistent w/ samp thm; see MH (3.19).
-
-    R = h N q
-
-    h is the matrix of lattice vectors (bohr)
-    N is diagonal with entry as 1/N_{x, y, z}
-    q is a vector of ints [0, N_{x, y, z} - 1]
-    N_{x, y, z} chosen s.t. N_{x, y, z} >= 2 * max(g_{x, y, z}) + 1
-    where g is the tuple of
-
-    Args:
-        cell : instance of :class:`Cell`
-
-    Returns:
-        coords : (ngx*ngy*ngz, 3) ndarray
-            The real-space grid point coordinates.
-
-    '''
-    if mesh is None: mesh = cell.mesh
-    if 'gs' in kwargs:
-        warnings.warn('cell.gs is deprecated.  It is replaced by cell.mesh,'
-                      'the number of PWs (=2*gs+1) along each direction.')
-        mesh = [2*n+1 for n in kwargs['gs']]
-    mesh = np.asarray(mesh, dtype=np.double)
-    qv = lib.cartesian_prod([np.arange(x) for x in mesh])
-    # 1/mesh is delta(XYZ) spacing
-    # distributed over cell.lattice_vectors()
-    # s.t. a_frac * mesh[0] = cell.lattice_vectors()
-    a_frac = np.einsum('i,ij->ij', 1./mesh, cell.lattice_vectors())
-    # now produce the coordinates in the cell
-    coords = np.dot(qv, a_frac)
-    return coords
-
-
-def ke_matrix(cell, kpoint=np.array([0, 0, 0])):
-    """
-    construct kinetic-energy matrix at a particular k-point
-
-    -0.5 nabla^{2} phi_{r}(g) = -0.5 (iG)^2 (1/sqrt(omega))exp(iG.r)
-    =0.5G^2 phi_{r}(g)
-    """
-    diag_components = 0.5 * np.linalg.norm(cell.Gv + kpoint, axis=1)**2
-    return np.diag(diag_components)
-
-
-def potential_matrix(cell, kpoint=np.array([0, 0, 0])):
-    """
-    Calculate the potential energy matrix in planewaves
-    :param cell:
-    :param kpoint:
-    :return:
-    """
-    pass
-
-
-def get_nuc(mydf, kpts=None):
     """
     v(r) = \sum_{G}v(G)exp(iG.r)
 
-    :param mydf:
-    :param kpts:
-    :return:
+    :return cell: the unit cell
+    :param basis: plane wave basis information
+    :return: vneG: the nuclear-electron potential in the plane wave basis
     """
-    if kpts is None:
-        kpts_lst = np.zeros((1,3))
-    else:
-        kpts_lst = np.reshape(kpts, (-1,3))
 
-    cell = mydf.cell
-    mesh = mydf.mesh  # mesh dimensions [2Ns + 1]
-    charge = -cell.atom_charges()  # nuclear charge of atoms in cell
-    Gv = cell.get_Gv(mesh)
-    SI = get_SI(cell, Gv)
-    assert SI.shape[1] == Gv.shape[0]
+    # nuclear charge of atoms in cell
+    charge = -cell.atom_charges()  
 
-    rhoG = np.dot(charge, SI)  # this is Z_{I} * S_{I}
+    # structure factor
+    SI = get_SI(cell, basis.g)
 
-    coulG = tools.get_coulG(cell, mesh=mesh, Gv=Gv)  # V(0) = 0 can be treated separately/
-    absG2 = np.einsum('gi,gi->g', Gv, Gv)
-    test_coulG = np.divide(4 * np.pi, absG2, out=np.zeros_like(absG2), where=absG2 != 0) # save divide
-    assert np.allclose(coulG, test_coulG)
+    assert SI.shape[1] == basis.g.shape[0]
+
+    # this is Z_{I} * S_{I}
+    rhoG = np.dot(charge, SI)  
+    #for I in range(0, 1):
+    #    rhoG -= np.dot(charge[I], basis.SI[I])
+
+    # |G|^2
+    absG2 = np.einsum('gi,gi->g', basis.g, basis.g)
+    coulG = np.divide(4.0 * np.pi, absG2, out=np.zeros_like(absG2), where=absG2 != 0.0) # save divide
 
     vneG = rhoG * coulG
-    # vneG / cell.vol  # Martin 12.16
 
-    # this is for evaluating the potential on a real-space grid
-    # potential = np.zeros((Gv.shape[0], Gv.shape[0]))
-    # gx = np.fft.fftfreq(mesh[0], 1./mesh[0])
-    # gy = np.fft.fftfreq(mesh[1], 1./mesh[1])
-    # gz = np.fft.fftfreq(mesh[2], 1./mesh[2])
-    # gxyz = lib.cartesian_prod((gx, gy, gz)).astype(int)
-    # gxyz_dict = dict(zip([tuple(xx) for xx in gxyz], range(len(gxyz))))
-
-    # for ridx, cidx in product(range(len(gxyz)), repeat=2):
-    #     qprime_minus_q = tuple(gxyz[ridx] - gxyz[cidx])
-    #     if qprime_minus_q in gxyz_dict.keys():
-    #         potential[ridx, cidx] = vneG[gxyz_dict[qprime_minus_q]] / cell.vol
-    # return potential
-
+    return vneG
 
 def get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff, cell_dimension = 3, distance_units = 'B'):
 
@@ -402,6 +292,7 @@ def get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cut
     :return k: k-points
     :return a: lattice vectors
     :return h: reciprocal lattice vectors
+    :return cell: the unit cell
     :return omega: cell volume
 
     """
@@ -440,13 +331,12 @@ def get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cut
     a = cell.a 
 
     # get reciprocal lattice vectors
-    h = cell.reciprocal_vectors() 
+    b = cell.reciprocal_vectors() 
 
     # get cell volume
     omega = np.linalg.det(a)
 
-    return k, a, h, omega
-
+    return k, a, b, omega, cell
 
 def factor_integer(n):
 
@@ -467,7 +357,7 @@ def factor_integer(n):
 
     return factors
 
-def get_plane_wave_basis(energy_cutoff, a, h):
+def get_plane_wave_basis(energy_cutoff, a, b):
 
     """
     
@@ -475,7 +365,7 @@ def get_plane_wave_basis(energy_cutoff, a, h):
 
     :param energy_cuttoff: kinetic energy cutoff (in atomic units)
     :param a: lattice vectors
-    :param h: reciprocal lattice vectors
+    :param b: reciprocal lattice vectors
 
     :return g: the plane wave basis
     :return g2: the square modulus of the plane wave basis
@@ -486,7 +376,6 @@ def get_plane_wave_basis(energy_cutoff, a, h):
 
     
     """
-
 
     # estimate maximum values for the miller indices (for density)
     reciprocal_max_dim_1 = int( np.ceil( (np.sqrt(2.0*4.0*energy_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[0]) + 1.0))
@@ -503,7 +392,7 @@ def get_plane_wave_basis(energy_cutoff, a, h):
             for k in np.arange(-reciprocal_max_dim_3, reciprocal_max_dim_3+1):
 
                 # G vector
-                gtmp = i * h[0] + j * h[1] + k * h[2]
+                gtmp = i * b[0] + j * b[1] + k * b[2]
 
                 # |G|^2
                 g2tmp = np.dot(gtmp, gtmp)
@@ -541,7 +430,7 @@ def get_plane_wave_basis(energy_cutoff, a, h):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, energy_cutoff, a, h, k):
+    def __init__(self, energy_cutoff, a, h, k, cell):
 
         """
 
@@ -551,6 +440,7 @@ class plane_wave_basis():
         :param a: lattice vectors
         :param h: reciprocal lattice vectors
         :param k: k-points
+        :param cell: the unit cell
 
         members:
 
@@ -562,11 +452,13 @@ class plane_wave_basis():
         miller_to_g: a map between miller indices and a single index identifying the basis function
         n_plane_waves_per_k: number of plane wave basis functions per k-point
         kg_to_g: a map between basis functions for a given k-point and the original set of plane wave basis functions
+        SI: structure factor
 
         """
 
         g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g = get_plane_wave_basis(energy_cutoff, a, h)
         n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(energy_cutoff, k, g)
+        SI = get_SI(cell,g)
 
         self.g = g
         self.g2 = g2
@@ -576,7 +468,7 @@ class plane_wave_basis():
         self.miller_to_g = miller_to_g
         self.n_plane_waves_per_k = n_plane_waves_per_k
         self.kg_to_g = kg_to_g
-
+        self.SI = SI
 
 def get_plane_waves_per_k(energy_cutoff, k, g):
 
@@ -656,7 +548,6 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
-
 def main():
 
     # material definition
@@ -670,21 +561,16 @@ def main():
     # desired number of k-points in each direction
     n_k_points = [1, 1, 1]
 
-    # get k-points, lattiice vectors, reciprocal lattice vectors, and cell volume
-    k, a, h, omega = get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff)
+    # get k-points, lattice vectors, reciprocal lattice vectors, cell volume, and cell itself
+    k, a, b, omega, cell = get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff)
 
     # get plane wave basis information
-    basis = plane_wave_basis(energy_cutoff, a, h, k)
-
-    # todo: correct structure factor
-    sg = np.zeros(len(basis.g), dtype='complex128')
-    for i in range(len(basis.g)):
-        sg[i] = 2.0 * np.cos(np.dot(basis.g[i], np.array([lattice_constant, lattice_constant, lattice_constant]) / 8.0))
+    basis = plane_wave_basis(energy_cutoff, a, b, k, cell)
 
     # pseudopotential parameters (default Si)
     gth_params = gth_pseudopotential_parameters()
 
-    # todo: potential
+    # potential in reciprocal space
     vg = np.zeros(len(basis.g), dtype = 'float64')
 
     # maximum number of iterations
@@ -705,6 +591,8 @@ def main():
 
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
+    vne = get_nuclear_electronic_potential(cell, basis)
+
     print("    %5s %20s" % ('iter','|drho|'))
 
     # begin SCF iterations
@@ -719,10 +607,15 @@ def main():
             fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
 
             # get pseudopotential
-            gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega, sg)
+            gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega)
 
-            # get potential
-            potential = get_potential(basis, k, j, vg)
+            potential = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+
+            # get potential (dft + electron-electron)
+            potential += get_potential(basis, k, j, vg)
+
+            # get potential (nuclear-electronic)
+            potential += get_potential(basis, k, j, vne)
 
             # F = V + PP
             fock += potential + gth_pseudopotential
@@ -732,8 +625,8 @@ def main():
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
             np.fill_diagonal(fock, diagonals)
 
-            if scf_iter == 0 :
-                assert np.isclose(24.132725572695584, np.linalg.norm(fock))
+            #if scf_iter == 0 :
+            #    assert np.isclose(24.132725572695584, np.linalg.norm(fock))
 
             # diagonalize fock matrix
             epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbands-1))
@@ -750,8 +643,8 @@ def main():
 
                 new_rho += ( 2.0 / len(k) ) * np.absolute(Cocc)**2.0
 
-        if scf_iter == 0 :
-            assert np.isclose(2.539489449059902, np.linalg.norm(new_rho))
+        #if scf_iter == 0 :
+        #    assert np.isclose(2.539489449059902, np.linalg.norm(new_rho))
 
         # DFT potential
         xalpha = 2.0 / 3.0
@@ -760,25 +653,25 @@ def main():
         for myg in range( len(basis.g) ):
             vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] )
  
-        if scf_iter == 0:
-            assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
+        #if scf_iter == 0:
+        #    assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
 
         # coulomb potential
         tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
             rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
-            if ( basis.g2[myg] > tiny ):
-                vg[myg] += 4.0 * np.pi * rhog[myg] / basis.g2[myg]
+        vg += np.divide(4.0 * np.pi * rhog, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
 
-        if scf_iter == 0:
-            assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
+        #if scf_iter == 0:
+        #    assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
 
         # convergence in density
         rho_diff = new_rho - rho
         rho_diff_norm = np.linalg.norm(rho_diff)
+
+        print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf %20.12lf" %  (scf_iter,rho_diff_norm,np.linalg.norm(rho),np.linalg.norm(new_rho),rho[1][1][1],rho[2][2][2]))
         rho = new_rho
 
-        print("    %5i %20.12lf" %  (scf_iter,rho_diff_norm))
 
         if ( rho_diff_norm < 1e-8 ) :
             break
