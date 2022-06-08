@@ -245,18 +245,18 @@ def get_SI(cell, Gv=None):
     SI = np.exp(-1j*np.dot(coords, Gv.T))
     return SI
 
-def get_nuclear_electronic_potential(cell, basis):
+def get_nuclear_electronic_potential(cell, basis, omega, Zion = 0.0):
 
     """
     v(r) = \sum_{G}v(G)exp(iG.r)
 
-    :return cell: the unit cell
+    :param cell: the unit cell
     :param basis: plane wave basis information
     :return: vneG: the nuclear-electron potential in the plane wave basis
     """
 
-    # nuclear charge of atoms in cell
-    charge = -cell.atom_charges()  
+    # nuclear charge of atoms in cell. TODO: generalize for multiple atoms
+    charge = - ( cell.atom_charges() - Zion ) 
 
     # structure factor
     SI = get_SI(cell, basis.g)
@@ -268,11 +268,9 @@ def get_nuclear_electronic_potential(cell, basis):
     #for I in range(0, 1):
     #    rhoG -= np.dot(charge[I], basis.SI[I])
 
-    # |G|^2
-    absG2 = np.einsum('gi,gi->g', basis.g, basis.g)
-    coulG = np.divide(4.0 * np.pi, absG2, out=np.zeros_like(absG2), where=absG2 != 0.0) # save divide
+    coulG = np.divide(4.0 * np.pi, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
 
-    vneG = rhoG * coulG
+    vneG = rhoG * coulG / omega
 
     return vneG
 
@@ -577,7 +575,7 @@ def main():
     maxiter = 100
 
     # number of bands, TODO: be less arbitrary
-    nbands = 4
+    nbands = 5
 
     print("")
     print("    ==> Begin SCF <==")
@@ -591,7 +589,7 @@ def main():
 
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
-    vne = get_nuclear_electronic_potential(cell, basis)
+    vne = get_nuclear_electronic_potential(cell, basis, omega, gth_params.Zion)
 
     print("    %5s %20s" % ('iter','|drho|'))
 
@@ -609,16 +607,14 @@ def main():
             # get pseudopotential
             gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega)
 
-            potential = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-
             # get potential (dft + electron-electron)
-            potential += get_potential(basis, k, j, vg)
+            fock += get_potential(basis, k, j, vg)
 
             # get potential (nuclear-electronic)
-            potential += get_potential(basis, k, j, vne)
+            fock += get_potential(basis, k, j, vne)
 
             # F = V + PP
-            fock += potential + gth_pseudopotential
+            fock += gth_pseudopotential
 
             # F = V + PP + T
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
@@ -634,14 +630,14 @@ def main():
             # build density 
             for pp in range(nbands):
 
-                Cocc = np.zeros(basis.real_space_grid_dim,dtype='complex128')
+                occ = np.zeros(basis.real_space_grid_dim,dtype='complex128')
                 for tt in range(basis.n_plane_waves_per_k[j]):
                     ik = basis.kg_to_g[j][tt]
-                    Cocc[ get_miller_indices(ik, basis) ] = C[tt, pp]
+                    occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
 
-                Cocc = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(Cocc)
+                occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
 
-                new_rho += ( 2.0 / len(k) ) * np.absolute(Cocc)**2.0
+                new_rho += ( 2.0 / len(k) ) * np.absolute(occ)**2.0
 
         #if scf_iter == 0 :
         #    assert np.isclose(2.539489449059902, np.linalg.norm(new_rho))
@@ -651,7 +647,7 @@ def main():
         vr = -1.5 * xalpha * ( 3.0 * new_rho / np.pi )**( 1.0 / 3.0 )
         tmp = np.fft.ifftn(vr)
         for myg in range( len(basis.g) ):
-            vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] )
+            vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] ) / omega
  
         #if scf_iter == 0:
         #    assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
@@ -660,7 +656,7 @@ def main():
         tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
             rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
-        vg += np.divide(4.0 * np.pi * rhog, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
+        vg += np.divide(4.0 * np.pi * rhog / omega, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
 
         #if scf_iter == 0:
         #    assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
@@ -671,7 +667,6 @@ def main():
 
         print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf %20.12lf" %  (scf_iter,rho_diff_norm,np.linalg.norm(rho),np.linalg.norm(new_rho),rho[1][1][1],rho[2][2][2]))
         rho = new_rho
-
 
         if ( rho_diff_norm < 1e-8 ) :
             break
