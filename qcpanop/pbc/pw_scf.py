@@ -83,7 +83,7 @@ def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
     g6 = g2 * g4
 
     vsgl=np.exp(-g2*rloc2/2.)*(-4.*np.pi*Zion/g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-g2*rloc2)+c3*(15.-10.*g2*rloc2+g4*rloc4)+c4*(105.-105.*g2*rloc2+21.*g4*rloc4-g6*rloc6)))
-    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit
+    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc-Zion) #|G|^2->0 limit ... AED changed sign
 
     vsg[largeind] = vsgl
     vsg[smallind] = vsgs
@@ -182,7 +182,8 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
 
         ik = basis.kg_to_g[kid][aa]
         gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
-        inds = basis.miller_to_g[gdiff.T.tolist()]
+        #inds = basis.miller_to_g[gdiff.T.tolist()]
+        inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
         vsg_local = get_local_pseudopotential_gth(basis.g2[inds], omega, gth_params)
 
@@ -216,7 +217,8 @@ def get_potential(basis, k, kid, vg):
 
         ik = basis.kg_to_g[kid][aa]
         gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
-        inds = basis.miller_to_g[gdiff.T.tolist()]
+        #inds = basis.miller_to_g[gdiff.T.tolist()]
+        inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
         potential[aa, aa:] = vg[inds]
 
@@ -245,18 +247,23 @@ def get_SI(cell, Gv=None):
     SI = np.exp(-1j*np.dot(coords, Gv.T))
     return SI
 
-def get_nuclear_electronic_potential(cell, basis, omega, Zion = 0.0):
+def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None):
 
     """
     v(r) = \sum_{G}v(G)exp(iG.r)
 
     :param cell: the unit cell
     :param basis: plane wave basis information
+    :param valence_charges: the charges associated with the valence
     :return: vneG: the nuclear-electron potential in the plane wave basis
     """
 
-    # nuclear charge of atoms in cell. TODO: generalize for multiple atoms
-    charge = - ( cell.atom_charges() - Zion ) 
+    # nuclear charge of atoms in cell. 
+    charges = - cell.atom_charges()
+    if valence_charges is not None:
+        charges = - valence_charges
+
+    print(charges)
 
     # structure factor
     SI = get_SI(cell, basis.g)
@@ -264,9 +271,9 @@ def get_nuclear_electronic_potential(cell, basis, omega, Zion = 0.0):
     assert SI.shape[1] == basis.g.shape[0]
 
     # this is Z_{I} * S_{I}
-    rhoG = np.dot(charge, SI)  
+    rhoG = np.dot(charges, SI)  
     #for I in range(0, 1):
-    #    rhoG -= np.dot(charge[I], basis.SI[I])
+    #    rhoG -= np.dot(charges[I], basis.SI[I])
 
     coulG = np.divide(4.0 * np.pi, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
 
@@ -295,17 +302,23 @@ def get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cut
 
     """
 
+    cell = gto.M(a = np.eye(3) * 5,
+                 atom = 'H 0 0 1.0; H 0 0 0',
+                 basis = 'sto-3g',
+                 unit = 'angstrom',
+                 ke_cutoff = 0.5)
+
     # build unit cell
-    ase_atom = bulk(atom_type, unit_type, a = lattice_constant)
+    #ase_atom = bulk(atom_type, unit_type, a = lattice_constant)
 
     # get PySCF unit cell object
-    cell = pbcgto.Cell()
+    #cell = pbcgto.Cell()
 
     # set atoms
-    cell.atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
+    #cell.atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
 
     # set lattice vectors
-    cell.a = ase_atom.cell 
+    #cell.a = ase_atom.cell 
 
     # set kinetic energy cutoff
     cell.ke_cutoff = energy_cutoff 
@@ -574,13 +587,6 @@ def main():
     # maximum number of iterations
     maxiter = 100
 
-    # number of bands, TODO: be less arbitrary
-    nbands = 5
-
-    print("")
-    print("    ==> Begin SCF <==")
-    print("")
-
     tiny = 1e-8
 
     rhog = np.zeros(len(basis.g), dtype = 'float64')
@@ -589,7 +595,30 @@ def main():
 
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
-    vne = get_nuclear_electronic_potential(cell, basis, omega, gth_params.Zion)
+    # electron-nucleus potential
+    # TODO: make flexible for pseudopotential or not
+    #valence_charges = np.array([gth_params.Zion, gth_params.Zion])
+    valence_charges = cell.atom_charges()
+    print(valence_charges)
+    #exit()
+    vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
+
+    # number of bands, 
+    total_charge = 0
+    for I in range ( len(valence_charges) ):
+        total_charge += valence_charges[I]
+    nbands = int(total_charge / 2)
+
+    print('total_charge',total_charge)
+    print('nbands',nbands)
+    
+
+    # assuming nalpha = nbeta
+    assert total_charge % 2 == 0
+
+    print("")
+    print("    ==> Begin SCF <==")
+    print("")
 
     print("    %5s %20s" % ('iter','|drho|'))
 
@@ -604,19 +633,16 @@ def main():
             # form fock matrix
             fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
 
-            # get pseudopotential
-            gth_pseudopotential = get_gth_pseudopotential(basis, gth_params, k, j, omega)
-
             # get potential (dft + electron-electron)
             fock += get_potential(basis, k, j, vg)
 
             # get potential (nuclear-electronic)
             fock += get_potential(basis, k, j, vne)
 
-            # F = V + PP
-            fock += gth_pseudopotential
+            # get pseudopotential
+            #fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
 
-            # F = V + PP + T
+            # get kinetic energy
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
             np.fill_diagonal(fock, diagonals)
@@ -625,13 +651,14 @@ def main():
             #    assert np.isclose(24.132725572695584, np.linalg.norm(fock))
 
             # diagonalize fock matrix
-            epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbands-1))
+            epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*nbands-1))
+            print(epsilon)
 
             # build density 
             for pp in range(nbands):
 
-                occ = np.zeros(basis.real_space_grid_dim,dtype='complex128')
-                for tt in range(basis.n_plane_waves_per_k[j]):
+                occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
+                for tt in range( basis.n_plane_waves_per_k[j] ):
                     ik = basis.kg_to_g[j][tt]
                     occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
 
@@ -652,11 +679,11 @@ def main():
         #if scf_iter == 0:
         #    assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
 
-        # coulomb potential
+        # coulomb potential 
         tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
             rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
-        vg += np.divide(4.0 * np.pi * rhog / omega, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
+        vg += np.divide(4.0 * np.pi * rhog / omega, basis.g2, out=np.zeros_like(basis.g2), where = basis.g2 != 0.0) # save divide
 
         #if scf_iter == 0:
         #    assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
@@ -664,6 +691,9 @@ def main():
         # convergence in density
         rho_diff = new_rho - rho
         rho_diff_norm = np.linalg.norm(rho_diff)
+
+        #charge = ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
+        #print(charge)
 
         print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf %20.12lf" %  (scf_iter,rho_diff_norm,np.linalg.norm(rho),np.linalg.norm(new_rho),rho[1][1][1],rho[2][2][2]))
         rho = new_rho
