@@ -36,6 +36,9 @@ class V2RDMAsFCISolver(object):
         if nthreads is not None:
             psi4.core.set_num_threads(int(nthreads))
 
+        if memory_in_mb is not None:
+            psi4.set_memory('{} mb'.format(memory_in_mb))
+
         # psi4.set_memory('{} mb'.format(int(memory_in_mb)))
         options = psi4.core.get_options()
         options.set_current_module('HILBERT')
@@ -68,10 +71,14 @@ class V2RDMAsFCISolver(object):
         fake_hf.mo_coeff = numpy.eye(norb)
         fake_hf.mo_occ = numpy.zeros(norb)
         # build the correct alpha beta spins.
-        nalpha, nbeta = nelec[0], nelec[1]
+        nalpha, nbeta = int(nelec[0]), int(nelec[1])
         nmo = norb
         alpha_diag = [1] * nalpha + [0] * (nmo - nalpha)
         beta_diag = [1] * nbeta + [0] * (nmo - nbeta)
+
+        print(nalpha, nbeta, nmo)
+        print(alpha_diag)
+        print(beta_diag)
         fake_hf.mo_occ = numpy.array(alpha_diag) + numpy.array(beta_diag)
 
         # run 2-RDM code. Remember that S = ms = 1/2(na - nb)--i.e. always high spin
