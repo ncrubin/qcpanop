@@ -191,7 +191,7 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
 
         gth_pseudopotential[aa, aa:] = 0.0
         for I in range(0, len(basis.SI)):
-            gth_pseudopotential[aa, aa:] += ( vsg_local + vsg_nonlocal ) * basis.SI[I][inds]
+            gth_pseudopotential[aa, aa:] += ( vsg_local + 0.0 * vsg_nonlocal ) * basis.SI[I][inds]
 
     return gth_pseudopotential
 
@@ -223,7 +223,6 @@ def get_potential(basis, k, kid, vg):
         potential[aa, aa:] = vg[inds]
 
     return potential
-
 
 def get_SI(cell, Gv=None):
 
@@ -281,75 +280,8 @@ def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None)
 
     return vneG
 
-def get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff, cell_dimension = 3, distance_units = 'B'):
-
-    """
-       
-    get k-points and cell info
-    
-    :param n_k_points: number of k-points in each direction
-    :param atom_type: atom type
-    :param unit_type: unit cell type
-    :param lattice_constant: lattice constant
-    :param energy_cutoff: energy cutoff for plane wave basis functions
-    :param cell_dimension: dimensionality (default = 3)
-    :param distance_units: distance units (default = 'B', bohr)
-    :return k: k-points
-    :return a: lattice vectors
-    :return h: reciprocal lattice vectors
-    :return cell: the unit cell
-    :return omega: cell volume
-
-    """
-
-    cell = gto.M(a = np.eye(3) * 5,
-                 atom = 'H 0 0 1.0; H 0 0 0',
-                 basis = 'sto-3g',
-                 unit = 'angstrom',
-                 ke_cutoff = 0.5)
-
-    # build unit cell
-    #ase_atom = bulk(atom_type, unit_type, a = lattice_constant)
-
-    # get PySCF unit cell object
-    #cell = pbcgto.Cell()
-
-    # set atoms
-    #cell.atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
-
-    # set lattice vectors
-    #cell.a = ase_atom.cell 
-
-    # set kinetic energy cutoff
-    cell.ke_cutoff = energy_cutoff 
-
-    # set precision
-    cell.precision = 1.e-8
-
-    # set dimension
-    cell.dimension = cell_dimension
-
-    # set units
-    cell.unit = distance_units
-
-    # build 
-    cell.build()
-
-    # get k-points
-    k = cell.make_kpts(n_k_points, wrap_around=True)
-
-    # get lattice vectors
-    a = cell.a 
-
-    # get reciprocal lattice vectors
-    b = cell.reciprocal_vectors() 
-
-    # get cell volume
-    omega = np.linalg.det(a)
-
-    return k, a, b, omega, cell
-
 def factor_integer(n):
+    print('hi wtf',n)
 
     i = 2
     factors=[]
@@ -368,13 +300,13 @@ def factor_integer(n):
 
     return factors
 
-def get_plane_wave_basis(energy_cutoff, a, b):
+def get_plane_wave_basis(ke_cutoff, a, b):
 
     """
     
     get plane wave basis functions and indices
 
-    :param energy_cuttoff: kinetic energy cutoff (in atomic units)
+    :param ke_cuttoff: kinetic energy cutoff (in atomic units)
     :param a: lattice vectors
     :param b: reciprocal lattice vectors
 
@@ -389,9 +321,9 @@ def get_plane_wave_basis(energy_cutoff, a, b):
     """
 
     # estimate maximum values for the miller indices (for density)
-    reciprocal_max_dim_1 = int( np.ceil( (np.sqrt(2.0*4.0*energy_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[0]) + 1.0))
-    reciprocal_max_dim_2 = int( np.ceil( (np.sqrt(2.0*4.0*energy_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[1]) + 1.0))
-    reciprocal_max_dim_3 = int( np.ceil( (np.sqrt(2.0*4.0*energy_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[2]) + 1.0))
+    reciprocal_max_dim_1 = int( np.ceil( (np.sqrt(2.0*4.0*ke_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[0]) + 1.0))
+    reciprocal_max_dim_2 = int( np.ceil( (np.sqrt(2.0*4.0*ke_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[1]) + 1.0))
+    reciprocal_max_dim_3 = int( np.ceil( (np.sqrt(2.0*4.0*ke_cutoff) / (2.0 * np.pi) ) * np.linalg.norm(a[2]) + 1.0))
 
     # g, g2, and miller indices
     g = np.empty(shape=[0,3],dtype='float64')
@@ -408,8 +340,8 @@ def get_plane_wave_basis(energy_cutoff, a, b):
                 # |G|^2
                 g2tmp = np.dot(gtmp, gtmp)
 
-                # energy_cutoff for density is 4 times energy_cutoff for orbitals
-                if (g2tmp/2.0 <= 4.0 * energy_cutoff):
+                # ke_cutoff for density is 4 times ke_cutoff for orbitals
+                if (g2tmp/2.0 <= 4.0 * ke_cutoff):
 
                     # collect G vectors
                     g = np.concatenate( (g, np.expand_dims(gtmp,axis=0) ) ) 
@@ -441,15 +373,13 @@ def get_plane_wave_basis(energy_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, energy_cutoff, a, h, k, cell):
+    def __init__(self, ke_cutoff, k, cell):
 
         """
 
         plane wave basis information
 
-        :param energy_cuttoff: kinetic energy cutoff (in atomic units)
-        :param a: lattice vectors
-        :param h: reciprocal lattice vectors
+        :param ke_cuttoff: kinetic energy cutoff (in atomic units)
         :param k: k-points
         :param cell: the unit cell
 
@@ -467,8 +397,10 @@ class plane_wave_basis():
 
         """
 
-        g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g = get_plane_wave_basis(energy_cutoff, a, h)
-        n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(energy_cutoff, k, g)
+        a = cell.a
+        h = cell.reciprocal_vectors()
+        g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g = get_plane_wave_basis(ke_cutoff, a, h)
+        n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(ke_cutoff, k, g)
         SI = get_SI(cell,g)
 
         self.g = g
@@ -481,14 +413,14 @@ class plane_wave_basis():
         self.kg_to_g = kg_to_g
         self.SI = SI
 
-def get_plane_waves_per_k(energy_cutoff, k, g):
+def get_plane_waves_per_k(ke_cutoff, k, g):
 
     """
    
     get dimension of plane wave basis for each k-point and a map between these
     the plane wave basis functions for a given k-point and the original list of plane waves
 
-    :param energy_cutoff: the kinetic energy cutoff (in atomic units)
+    :param ke_cutoff: the kinetic energy cutoff (in atomic units)
     :param k: the list of k-points
     :param g: the list plane wave basis functions
     :return n_plane_waves_per_k: the number of plane wave basis functions for each k-point
@@ -508,7 +440,7 @@ def get_plane_waves_per_k(energy_cutoff, k, g):
             # that basis function squared
             kg2tmp = np.dot(kgtmp,kgtmp)
 
-            if(kg2tmp/2.0 <= energy_cutoff):
+            if(kg2tmp/2.0 <= ke_cutoff):
                 n_plane_waves_per_k[i] += 1
 
     # kg_to_g maps basis for specific k-point to original plane wave basis
@@ -524,7 +456,7 @@ def get_plane_waves_per_k(energy_cutoff, k, g):
             # that basis function squared
             kg2tmp=np.dot(kgtmp,kgtmp)
 
-            if(kg2tmp / 2.0 <= energy_cutoff):
+            if(kg2tmp / 2.0 <= ke_cutoff):
                 kg_to_g[i, ind] = j
                 ind += 1
 
@@ -559,24 +491,52 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
+# full density matrix for RHF
+def make_rdm1(mo_coeff, mo_occ, **kwargs):
+    """
+
+    one-particle density matrix in plane wave representation
+
+    Args:
+        mo_coeff : 2D ndarray
+            Orbital coefficients. Each column is one orbital.
+        mo_occ : 1D ndarray
+            Occupancy
+    """
+
+    mocc = mo_coeff[:,mo_occ>0]
+    return np.dot(mocc*mo_occ[mo_occ>0], mocc.conj().T)
+
 def main():
 
-    # material definition
-    atom_type = 'Si'
-    unit_type = 'diamond'
-    lattice_constant = 10.26
-
     # kinetic energy cutoff
-    energy_cutoff = 100.0 / 27.21138602
+    ke_cutoff = 300.0 / 27.21138602
 
     # desired number of k-points in each direction
-    n_k_points = [1, 1, 1]
+    n_k_points = [3, 3, 3]
 
-    # get k-points, lattice vectors, reciprocal lattice vectors, cell volume, and cell itself
-    k, a, b, omega, cell = get_cell_info(n_k_points, atom_type, unit_type, lattice_constant, energy_cutoff)
+    # define unit cell 
+    cell = gto.M(a = np.eye(3) * 8,
+                 atom = 'H 0 0 1.0; H 0 0 0',
+                 unit = 'bohr',
+                 ke_cutoff = ke_cutoff,
+                 precision = 1.0e-8,
+                 dimension = 3)
+
+    # build unit cell
+    cell.build()
+
+    # cell volumn
+    omega = np.linalg.det(cell.a)
+
+    # get k-points
+    k = cell.make_kpts(n_k_points, wrap_around=True)
+
+    # get madelung constant
+    madelung = tools.pbc.madelung(cell, k)
 
     # get plane wave basis information
-    basis = plane_wave_basis(energy_cutoff, a, b, k, cell)
+    basis = plane_wave_basis(ke_cutoff, k, cell)
 
     # pseudopotential parameters (default Si)
     gth_params = gth_pseudopotential_parameters()
@@ -611,7 +571,6 @@ def main():
 
     print('total_charge',total_charge)
     print('nbands',nbands)
-    
 
     # assuming nalpha = nbeta
     assert total_charge % 2 == 0
@@ -622,12 +581,19 @@ def main():
 
     print("    %5s %20s" % ('iter','|drho|'))
 
+    # occupation vector
+    mo_occ = np.zeros(len(basis.g), dtype = 'float64')
+    for i in range (0,nbands):
+        mo_occ[i] = 1.0
+
     # begin SCF iterations
     for i in range(0,maxiter):
 
         new_rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+        opdm = np.zeros([len(basis.g), len(basis.g)], dtype = 'complex128')
  
         # loop over k-points
+        epsilon_total = np.zeros(2*nbands, dtype = 'float64')
         for j in range( len(k) ):
 
             # form fock matrix
@@ -652,20 +618,38 @@ def main():
 
             # diagonalize fock matrix
             epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*nbands-1))
+
+            #print(epsilon)
+            #print(np.einsum('pi,pq,jq->ij',C,fock,C))
+            #exit()
+
+            # add madelung constants?
+            for pp in range(nbands):
+                epsilon[pp] -= madelung
+            for pp in range(2*nbands):
+                epsilon_total[pp] += epsilon[pp] / len(k)
             print(epsilon)
 
             # build density 
+            #mo_coeff = np.zeros([nbands, len(basis.g)], dtype = 'complex128')
             for pp in range(nbands):
 
                 occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
                 for tt in range( basis.n_plane_waves_per_k[j] ):
                     ik = basis.kg_to_g[j][tt]
                     occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
+                    #mo_coeff[pp, ik] = C[tt, pp]
 
                 occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
 
                 new_rho += ( 2.0 / len(k) ) * np.absolute(occ)**2.0
 
+            #print(mo_coeff)
+            #opdm += make_rdm1(mo_coeff, mo_occ) / len(k)
+
+
+        print('total eps')
+        print(epsilon_total)
         #if scf_iter == 0 :
         #    assert np.isclose(2.539489449059902, np.linalg.norm(new_rho))
 
@@ -674,7 +658,7 @@ def main():
         vr = -1.5 * xalpha * ( 3.0 * new_rho / np.pi )**( 1.0 / 3.0 )
         tmp = np.fft.ifftn(vr)
         for myg in range( len(basis.g) ):
-            vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] ) / omega
+            vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] ) #/ omega
  
         #if scf_iter == 0:
         #    assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
@@ -683,7 +667,7 @@ def main():
         tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
             rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
-        vg += np.divide(4.0 * np.pi * rhog / omega, basis.g2, out=np.zeros_like(basis.g2), where = basis.g2 != 0.0) # save divide
+        vg += np.divide(4.0 * np.pi * rhog, basis.g2, out=np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
 
         #if scf_iter == 0:
         #    assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
@@ -695,6 +679,7 @@ def main():
         #charge = ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
         #print(charge)
 
+        #print(opdm)
         print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf %20.12lf" %  (scf_iter,rho_diff_norm,np.linalg.norm(rho),np.linalg.norm(new_rho),rho[1][1][1],rho[2][2][2]))
         rho = new_rho
 
