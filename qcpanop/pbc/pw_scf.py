@@ -262,7 +262,7 @@ def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None)
     if valence_charges is not None:
         charges = - valence_charges
 
-    print(charges)
+    #print(charges)
 
     # structure factor
     SI = get_SI(cell, basis.g)
@@ -492,11 +492,19 @@ def get_miller_indices(idx, basis):
 
 def main():
 
+    print('')
+    print('    ************************************************')
+    print('    *                                              *')
+    print('    *                Plane-wave SCF                *')
+    print('    *                                              *')
+    print('    ************************************************')
+    print('')
+
     # kinetic energy cutoff
     ke_cutoff = 200.0 / 27.21138602
 
     # desired number of k-points in each direction
-    n_k_points = [2, 2, 2]
+    n_k_points = [5, 5, 5]
 
     # define unit cell 
     cell = gto.M(a = np.eye(3) * 8,
@@ -543,7 +551,7 @@ def main():
     # TODO: make flexible for pseudopotential or not
     #valence_charges = np.array([gth_params.Zion, gth_params.Zion])
     valence_charges = cell.atom_charges()
-    print(valence_charges)
+    #print(valence_charges)
     #exit()
     vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
 
@@ -563,7 +571,7 @@ def main():
     print("    ==> Begin SCF <==")
     print("")
 
-    print("    %5s %20s %20s %20s %20s" % ('iter', 'energy', 'dE', '|drho|', 'eps(HOMO)'))
+    print("    %5s %20s %20s %20s %20s" % ('iter', 'energy', '|dE|', '|drho|', 'eps(HOMO)'))
 
     # occupation vector
     mo_occ = np.zeros(len(basis.g), dtype = 'float64')
