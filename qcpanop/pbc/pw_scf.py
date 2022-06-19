@@ -281,7 +281,6 @@ def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None)
     return vneG
 
 def factor_integer(n):
-    print('hi wtf',n)
 
     i = 2
     factors=[]
@@ -491,33 +490,17 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
-# full density matrix for RHF
-def make_rdm1(mo_coeff, mo_occ, **kwargs):
-    """
-
-    one-particle density matrix in plane wave representation
-
-    Args:
-        mo_coeff : 2D ndarray
-            Orbital coefficients. Each column is one orbital.
-        mo_occ : 1D ndarray
-            Occupancy
-    """
-
-    mocc = mo_coeff[:,mo_occ>0]
-    return np.dot(mocc*mo_occ[mo_occ>0], mocc.conj().T)
-
 def main():
 
     # kinetic energy cutoff
-    ke_cutoff = 300.0 / 27.21138602
+    ke_cutoff = 200.0 / 27.21138602
 
     # desired number of k-points in each direction
-    n_k_points = [3, 3, 3]
+    n_k_points = [2, 2, 2]
 
     # define unit cell 
     cell = gto.M(a = np.eye(3) * 8,
-                 atom = 'H 0 0 1.0; H 0 0 0',
+                 atom = 'H 0.0 0.0 1.5; H 0.0 0.0 0.0',
                  unit = 'bohr',
                  ke_cutoff = ke_cutoff,
                  precision = 1.0e-8,
@@ -526,11 +509,11 @@ def main():
     # build unit cell
     cell.build()
 
-    # cell volumn
+    # cell volume
     omega = np.linalg.det(cell.a)
 
     # get k-points
-    k = cell.make_kpts(n_k_points, wrap_around=True)
+    k = cell.make_kpts(n_k_points, wrap_around = True)
 
     # get madelung constant
     madelung = tools.pbc.madelung(cell, k)
@@ -553,6 +536,7 @@ def main():
 
     scf_iter = 0
 
+    # density (real space)
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
     # electron-nucleus potential
@@ -569,8 +553,8 @@ def main():
         total_charge += valence_charges[I]
     nbands = int(total_charge / 2)
 
-    print('total_charge',total_charge)
-    print('nbands',nbands)
+    print('    total_charge: %20.12lf' % ( total_charge ) )
+    print('    nbands:       %20.12lf' % ( nbands ) )
 
     # assuming nalpha = nbeta
     assert total_charge % 2 == 0
@@ -579,12 +563,14 @@ def main():
     print("    ==> Begin SCF <==")
     print("")
 
-    print("    %5s %20s" % ('iter','|drho|'))
+    print("    %5s %20s %20s %20s %20s" % ('iter', 'energy', 'dE', '|drho|', 'eps(HOMO)'))
 
     # occupation vector
     mo_occ = np.zeros(len(basis.g), dtype = 'float64')
     for i in range (0,nbands):
         mo_occ[i] = 1.0
+
+    old_total_energy = 0.0
 
     # begin SCF iterations
     for i in range(0,maxiter):
@@ -594,6 +580,7 @@ def main():
  
         # loop over k-points
         epsilon_total = np.zeros(2*nbands, dtype = 'float64')
+        electronic_energy = 0.0
         for j in range( len(k) ):
 
             # form fock matrix
@@ -613,64 +600,85 @@ def main():
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
             np.fill_diagonal(fock, diagonals)
 
-            #if scf_iter == 0 :
-            #    assert np.isclose(24.132725572695584, np.linalg.norm(fock))
-
             # diagonalize fock matrix
             epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*nbands-1))
 
+            #print('eps before madelung')
             #print(epsilon)
-            #print(np.einsum('pi,pq,jq->ij',C,fock,C))
-            #exit()
 
-            # add madelung constants?
+            # accumulate the energy (adjust fock matrix first)
+            # F <- F + T + V
+            fock += get_potential(basis, k, j, vne)
+            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
+            np.fill_diagonal(fock, diagonals)
+
+            my_fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+            my_fock = fock + fock.conj().T
+            for pp in range(basis.n_plane_waves_per_k[j]):
+                my_fock[pp][pp] *= 0.5
+
+            diagonal_fock = np.einsum('pi,pq,qj->ij',C.conj(),my_fock,C)
+            for pp in range(nbands):
+                electronic_energy += ( diagonal_fock[pp][pp] ) / len(k)
+
+            # add madelung constant
             for pp in range(nbands):
                 epsilon[pp] -= madelung
+
+            # accumulate orbital energies
             for pp in range(2*nbands):
                 epsilon_total[pp] += epsilon[pp] / len(k)
-            print(epsilon)
 
-            # build density 
-            #mo_coeff = np.zeros([nbands, len(basis.g)], dtype = 'complex128')
+            #print('eps after madelung')
+            #print(epsilon)
+
+            # accumulate density 
             for pp in range(nbands):
 
                 occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
                 for tt in range( basis.n_plane_waves_per_k[j] ):
                     ik = basis.kg_to_g[j][tt]
                     occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
-                    #mo_coeff[pp, ik] = C[tt, pp]
 
                 occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
 
                 new_rho += ( 2.0 / len(k) ) * np.absolute(occ)**2.0
 
-            #print(mo_coeff)
-            #opdm += make_rdm1(mo_coeff, mo_occ) / len(k)
 
+        #print('total eps')
+        #print(epsilon_total)
 
-        print('total eps')
-        print(epsilon_total)
-        #if scf_iter == 0 :
-        #    assert np.isclose(2.539489449059902, np.linalg.norm(new_rho))
+        # LDA potential
+        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
+        vr = 4.0 / 3.0 * cx * np.power( new_rho , 1.0 / 3.0 )
 
-        # DFT potential
-        xalpha = 2.0 / 3.0
-        vr = -1.5 * xalpha * ( 3.0 * new_rho / np.pi )**( 1.0 / 3.0 )
         tmp = np.fft.ifftn(vr)
         for myg in range( len(basis.g) ):
             vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] ) #/ omega
- 
-        #if scf_iter == 0:
-        #    assert np.isclose(0.2847864818221838, np.linalg.norm(vg))
 
+        # LDA XC energy
+        xc_energy = cx * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho, 4.0/3.0))
+
+        # total energy
+        new_total_energy = np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung
+
+        # convergence in energy
+        energy_diff = np.abs(new_total_energy - old_total_energy)
+
+        # update energy
+        old_total_energy = new_total_energy
+
+        #print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
+        #print('    nuclear repulsion energy: %20.12lf' % ( cell.energy_nuc() ) )
+        #print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
+        #print('    xc energy:                %20.12lf' % ( xc_energy ) )
+        #print('    total energy:             %20.12lf' % ( new_total_energy ) )
+ 
         # coulomb potential 
         tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
             rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
         vg += np.divide(4.0 * np.pi * rhog, basis.g2, out=np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
-
-        #if scf_iter == 0:
-        #    assert np.isclose(0.32241081483652595, np.linalg.norm(vg))
 
         # convergence in density
         rho_diff = new_rho - rho
@@ -680,10 +688,10 @@ def main():
         #print(charge)
 
         #print(opdm)
-        print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf %20.12lf" %  (scf_iter,rho_diff_norm,np.linalg.norm(rho),np.linalg.norm(new_rho),rho[1][1][1],rho[2][2][2]))
+        print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm, epsilon_total[nbands - 1] ) )
         rho = new_rho
 
-        if ( rho_diff_norm < 1e-8 ) :
+        if ( rho_diff_norm < 1e-6 and energy_diff < 1e-6 ) :
             break
 
         scf_iter += 1
@@ -696,6 +704,16 @@ def main():
         print('')
         print('    SCF converged!')
         print('')
+
+    print('    ==> energy components <==')
+    print('')
+    print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
+    print('    nuclear repulsion energy: %20.12lf' % ( cell.energy_nuc() ) )
+    print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
+    print('    xc energy:                %20.12lf' % ( xc_energy ) )
+    print('')
+    print('    total energy:             %20.12lf' % ( np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung) )
+    print('')
 
     #print(done',np.linalg.norm(rhog),np.linalg.norm(vg))
 
