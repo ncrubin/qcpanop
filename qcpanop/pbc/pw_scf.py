@@ -501,10 +501,10 @@ def main():
     print('')
 
     # kinetic energy cutoff
-    ke_cutoff = 200.0 / 27.21138602
+    ke_cutoff = 100.0 / 27.21138602
 
     # desired number of k-points in each direction
-    n_k_points = [5, 5, 5]
+    n_k_points = [2, 2, 2]
 
     # define unit cell 
     cell = gto.M(a = np.eye(3) * 8,
@@ -561,8 +561,11 @@ def main():
         total_charge += valence_charges[I]
     nbands = int(total_charge / 2)
 
-    print('    total_charge: %20.12lf' % ( total_charge ) )
-    print('    nbands:       %20.12lf' % ( nbands ) )
+    #print('    no. k-points:      ( %5s, %5s, %5s)' % ( n_k_points[0], n_k_points[1], n_k_points[2] ) )
+    print('    no. k-points:        %20i' % ( len(k) ) )
+    print('    no. basis functions: %20i' % ( len(basis.g) ) )
+    print('    total_charge:        %20i' % ( total_charge ) )
+    print('    nbands:              %20i' % ( nbands ) )
 
     # assuming nalpha = nbeta
     assert total_charge % 2 == 0
@@ -720,8 +723,10 @@ def main():
     print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
     print('    xc energy:                %20.12lf' % ( xc_energy ) )
     print('')
-    print('    total energy:             %20.12lf' % ( np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung) )
+    print('    total energy:             %20.12lf' % ( np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung ) )
     print('')
+
+    assert np.isclose( -1.534165431994, np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung )
 
     #print(done',np.linalg.norm(rhog),np.linalg.norm(vg))
 
