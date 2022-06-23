@@ -230,8 +230,6 @@ def get_SI(cell, Gv=None):
     Calculate the structure factor for all atoms; see MH (3.34).
 
     Args:
-        cell : instance of :clast:`Cell`
-
         Gv : (N,3) array
             G vectors
 
@@ -258,11 +256,9 @@ def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None)
     """
 
     # nuclear charge of atoms in cell. 
-    charges = - cell.atom_charges()
+    charges = cell.atom_charges()
     if valence_charges is not None:
-        charges = - valence_charges
-
-    #print(charges)
+        charges = valence_charges
 
     # structure factor
     SI = get_SI(cell, basis.g)
@@ -271,12 +267,10 @@ def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None)
 
     # this is Z_{I} * S_{I}
     rhoG = np.dot(charges, SI)  
-    #for I in range(0, 1):
-    #    rhoG -= np.dot(charges[I], basis.SI[I])
 
-    coulG = np.divide(4.0 * np.pi, basis.g2, out=np.zeros_like(basis.g2), where=basis.g2 != 0.0) # save divide
+    coulG = np.divide(4.0 * np.pi, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-    vneG = rhoG * coulG / omega
+    vneG = - rhoG * coulG / omega
 
     return vneG
 
@@ -501,17 +495,41 @@ def main():
     print('')
 
     # kinetic energy cutoff
-    ke_cutoff = 100.0 / 27.21138602
+    ke_cutoff = 300.0 / 27.21138602
 
     # desired number of k-points in each direction
-    n_k_points = [2, 2, 2]
+    n_k_points = [1, 1, 1]
 
     # define unit cell 
-    cell = gto.M(a = np.eye(3) * 8,
-                 atom = 'H 0.0 0.0 1.5; H 0.0 0.0 0.0',
+    a = 3.9  / 0.52917
+    b = 3.9  / 0.52917
+    c = 6.36 / 0.52917
+    alpha = np.pi / 2.0
+    beta  = np.pi / 2.0
+    gamma = 2.0 * np.pi / 3.0
+
+    lattice_vectors = np.zeros([3,3], dtype = 'float64')
+    dum1 = np.cos(beta)
+    dum2 = ( np.cos(alpha) - np.cos(beta) * np.cos(gamma) ) / np.sin(gamma)
+
+    lattice_vectors[0,0] = a
+    lattice_vectors[0,1] = 0
+    lattice_vectors[0,2] = 0
+    lattice_vectors[1,0] = b * np.cos(gamma)
+    lattice_vectors[1,1] = b * np.sin(gamma)
+    lattice_vectors[1,2] = 0
+    lattice_vectors[2,0] = c * dum1
+    lattice_vectors[2,1] = c * dum2
+    lattice_vectors[2,2] = c * np.sqrt(1.0 - dum1*dum1 - dum2*dum2)
+
+    cell = gto.M(a = lattice_vectors,
+                 atom = 'H 0.944875937789368   0.545524311657879   2.30951017631385; H 0.0000000   1.091048812290946   0.76983672543795',
                  unit = 'bohr',
+                 basis = 'cc-pvdz',
+                 verbose = 100,
                  ke_cutoff = ke_cutoff,
                  precision = 1.0e-8,
+                 #spin = 1,
                  dimension = 3)
 
     # build unit cell
@@ -523,8 +541,20 @@ def main():
     # get k-points
     k = cell.make_kpts(n_k_points, wrap_around = True)
 
+    # run pyscf dft
+    from pyscf import dft, scf, pbc
+    #kmf = pbc.scf.KUHF(cell, kpts = k).run()
+    kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = k).run()
+    #exit()
+
     # get madelung constant
     madelung = tools.pbc.madelung(cell, k)
+
+    # get ewald correction
+    ewald = cell.ewald()
+
+    # get nuclear repulsion energy
+    enuc = cell.energy_nuc()
 
     # get plane wave basis information
     basis = plane_wave_basis(ke_cutoff, k, cell)
@@ -533,14 +563,16 @@ def main():
     gth_params = gth_pseudopotential_parameters()
 
     # potential in reciprocal space
-    vg = np.zeros(len(basis.g), dtype = 'float64')
+    v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
+    v_dft_alpha = np.zeros(len(basis.g), dtype = 'complex128')
+    v_dft_beta = np.zeros(len(basis.g), dtype = 'complex128')
 
     # maximum number of iterations
     maxiter = 100
 
     tiny = 1e-8
 
-    rhog = np.zeros(len(basis.g), dtype = 'float64')
+    rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
     scf_iter = 0
 
@@ -551,35 +583,27 @@ def main():
     # TODO: make flexible for pseudopotential or not
     #valence_charges = np.array([gth_params.Zion, gth_params.Zion])
     valence_charges = cell.atom_charges()
-    #print(valence_charges)
-    #exit()
     vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
 
-    # number of bands, 
+    # number of alpha and beta bands
     total_charge = 0
     for I in range ( len(valence_charges) ):
         total_charge += valence_charges[I]
-    nbands = int(total_charge / 2)
 
-    #print('    no. k-points:      ( %5s, %5s, %5s)' % ( n_k_points[0], n_k_points[1], n_k_points[2] ) )
+    nbeta = int(total_charge / 2)
+    nalpha = total_charge - nbeta
+
     print('    no. k-points:        %20i' % ( len(k) ) )
     print('    no. basis functions: %20i' % ( len(basis.g) ) )
     print('    total_charge:        %20i' % ( total_charge ) )
-    print('    nbands:              %20i' % ( nbands ) )
-
-    # assuming nalpha = nbeta
-    assert total_charge % 2 == 0
+    print('    no. alpha bands:     %20i' % ( nalpha ) )
+    print('    no. beta bands:      %20i' % ( nbeta ) )
 
     print("")
     print("    ==> Begin SCF <==")
     print("")
 
-    print("    %5s %20s %20s %20s %20s" % ('iter', 'energy', '|dE|', '|drho|', 'eps(HOMO)'))
-
-    # occupation vector
-    mo_occ = np.zeros(len(basis.g), dtype = 'float64')
-    for i in range (0,nbands):
-        mo_occ[i] = 1.0
+    print("    %5s %20s %20s %20s" % ('iter', 'energy', '|dE|', '|drho|'))
 
     old_total_energy = 0.0
 
@@ -587,18 +611,25 @@ def main():
     for i in range(0,maxiter):
 
         new_rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-        opdm = np.zeros([len(basis.g), len(basis.g)], dtype = 'complex128')
- 
+        new_rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+        new_rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+        one_electron_energy = 0.0
+        coulomb_energy = 0.0
+
         # loop over k-points
-        epsilon_total = np.zeros(2*nbands, dtype = 'float64')
-        electronic_energy = 0.0
         for j in range( len(k) ):
+
+            # alpha
 
             # form fock matrix
             fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
 
-            # get potential (dft + electron-electron)
-            fock += get_potential(basis, k, j, vg)
+            # get potential (dft)
+            fock += get_potential(basis, k, j, v_dft_alpha)
+
+            # get potential (coulomb)
+            fock += get_potential(basis, k, j, v_coulomb)
 
             # get potential (nuclear-electronic)
             fock += get_potential(basis, k, j, vne)
@@ -612,66 +643,165 @@ def main():
             np.fill_diagonal(fock, diagonals)
 
             # diagonalize fock matrix
-            epsilon, C = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*nbands-1))
+            epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*(nalpha+nbeta)-1))
 
-            #print('eps before madelung')
-            #print(epsilon)
+            # one-electron part of the energy 
 
-            # accumulate the energy (adjust fock matrix first)
-            # F <- F + T + V
-            fock += get_potential(basis, k, j, vne)
-            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
-            np.fill_diagonal(fock, diagonals)
+            # oei = T + V 
+            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+            oei = get_potential(basis, k, j, vne)
+            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
+            np.fill_diagonal(oei, diagonals)
 
-            my_fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            my_fock = fock + fock.conj().T
+            oei = oei + oei.conj().T
             for pp in range(basis.n_plane_waves_per_k[j]):
-                my_fock[pp][pp] *= 0.5
+                oei[pp][pp] *= 0.5
 
-            diagonal_fock = np.einsum('pi,pq,qj->ij',C.conj(),my_fock,C)
-            for pp in range(nbands):
-                electronic_energy += ( diagonal_fock[pp][pp] ) / len(k)
+            diagonal_oei = np.einsum('pi,pq,qj->ij',Calpha.conj(),oei,Calpha)
+            for pp in range(nalpha):
+                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(k)
 
-            # add madelung constant
-            for pp in range(nbands):
-                epsilon[pp] -= madelung
+            # coulomb part of the energy 
 
-            # accumulate orbital energies
-            for pp in range(2*nbands):
-                epsilon_total[pp] += epsilon[pp] / len(k)
+            # oei = 1/2 J
+            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+            oei = get_potential(basis, k, j, v_coulomb)
 
-            #print('eps after madelung')
-            #print(epsilon)
+            oei = oei + oei.conj().T
+            for pp in range(basis.n_plane_waves_per_k[j]):
+                oei[pp][pp] *= 0.5
+
+            diagonal_oei = np.einsum('pi,pq,qj->ij',Calpha.conj(),oei,Calpha)
+            for pp in range(nalpha):
+                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
 
             # accumulate density 
-            for pp in range(nbands):
+            for pp in range(nalpha):
 
                 occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
                 for tt in range( basis.n_plane_waves_per_k[j] ):
                     ik = basis.kg_to_g[j][tt]
-                    occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
+                    occ[ get_miller_indices(ik, basis) ] = Calpha[tt, pp]
 
                 occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
 
-                new_rho += ( 2.0 / len(k) ) * np.absolute(occ)**2.0
+                new_rho_alpha += ( 1.0 / len(k) ) * np.absolute(occ)**2.0
 
+            # now beta
 
-        #print('total eps')
-        #print(epsilon_total)
+            # form fock matrix
+            fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+
+            # get potential (dft)
+            fock += get_potential(basis, k, j, v_dft_beta)
+
+            # get potential (coulomb)
+            fock += get_potential(basis, k, j, v_coulomb)
+
+            # get potential (nuclear-electronic)
+            fock += get_potential(basis, k, j, vne)
+
+            # get pseudopotential
+            #fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
+
+            # get kinetic energy
+            kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
+            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
+            np.fill_diagonal(fock, diagonals)
+
+            # diagonalize fock matrix
+            epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*(nalpha+nbeta)-1))
+
+            # one-electron part of the energy 
+
+            # oei = T + V 
+            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+            oei = get_potential(basis, k, j, vne)
+            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
+            np.fill_diagonal(oei, diagonals)
+
+            oei = oei + oei.conj().T
+            for pp in range(basis.n_plane_waves_per_k[j]):
+                oei[pp][pp] *= 0.5
+
+            diagonal_oei = np.einsum('pi,pq,qj->ij',Cbeta.conj(),oei,Cbeta)
+            for pp in range(nbeta):
+                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(k)
+
+            # coulomb part of the energy 
+
+            # oei = 1/2 J
+            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
+            oei = get_potential(basis, k, j, v_coulomb)
+
+            oei = oei + oei.conj().T
+            for pp in range(basis.n_plane_waves_per_k[j]):
+                oei[pp][pp] *= 0.5
+
+            diagonal_oei = np.einsum('pi,pq,qj->ij',Cbeta.conj(),oei,Cbeta)
+            for pp in range(nbeta):
+                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
+
+            # accumulate density 
+            for pp in range(nbeta):
+
+                occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
+                for tt in range( basis.n_plane_waves_per_k[j] ):
+                    ik = basis.kg_to_g[j][tt]
+                    occ[ get_miller_indices(ik, basis) ] = Cbeta[tt, pp]
+
+                occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
+
+                new_rho_beta += ( 1.0 / len(k) ) * np.absolute(occ)**2.0
+
 
         # LDA potential
-        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
+        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
         vr = 4.0 / 3.0 * cx * np.power( new_rho , 1.0 / 3.0 )
 
-        tmp = np.fft.ifftn(vr)
+        # LSDA potential
+        alpha = 2.0 / 3.0
+        c = - 9.0 / 8.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) * alpha * 2.0 ** ( 1.0 / 3.0 )
+        vr_alpha = 4.0 / 3.0 * c * np.power( new_rho_alpha , 1.0 / 3.0 )
+        vr_beta = 4.0 / 3.0 * c * np.power( new_rho_beta , 1.0 / 3.0 )
+
+        tmp = np.fft.ifftn(vr_alpha)
         for myg in range( len(basis.g) ):
-            vg[myg]= np.real( tmp[ get_miller_indices(myg, basis) ] ) #/ omega
+            v_dft_alpha[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+        tmp = np.fft.ifftn(vr_beta)
+        for myg in range( len(basis.g) ):
+            v_dft_beta[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         # LDA XC energy
-        xc_energy = cx * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho, 4.0/3.0))
+        #xc_energy = cx * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho, 4.0/3.0))
+
+        # LSDA XC energy
+        xc_energy = c * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
+        xc_energy += c * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
+
+        #print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
+        #print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
+        #print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
+        #print('    xc energy:                %20.12lf' % ( xc_energy ) )
+        #print('    total energy:             %20.12lf' % ( new_total_energy ) )
+ 
+        # coulomb potential 
+        new_rho = new_rho_alpha + new_rho_beta
+        tmp = np.fft.ifftn(new_rho)
+        for myg in range( len(basis.g) ):
+            #rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
+            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+        # TODO: change basis.g2 to be complex valued?
+        g2 = np.zeros(len(basis.g2),dtype='complex128')
+        for myg in range( len(basis.g2) ):
+            g2[myg] = basis.g2[myg]
+        
+        v_coulomb = 4.0 * np.pi * np.divide(rhog, g2, out=np.zeros_like(g2), where = g2 != 0.0) # / omega
 
         # total energy
-        new_total_energy = np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung
+        new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc
 
         # convergence in energy
         energy_diff = np.abs(new_total_energy - old_total_energy)
@@ -679,27 +809,19 @@ def main():
         # update energy
         old_total_energy = new_total_energy
 
-        #print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
-        #print('    nuclear repulsion energy: %20.12lf' % ( cell.energy_nuc() ) )
-        #print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
-        #print('    xc energy:                %20.12lf' % ( xc_energy ) )
-        #print('    total energy:             %20.12lf' % ( new_total_energy ) )
- 
-        # coulomb potential 
-        tmp = np.fft.ifftn(new_rho)
-        for myg in range( len(basis.g) ):
-            rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
-        vg += np.divide(4.0 * np.pi * rhog, basis.g2, out=np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
-
         # convergence in density
         rho_diff = new_rho - rho
         rho_diff_norm = np.linalg.norm(rho_diff)
 
-        #charge = ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
-        #print(charge)
+        # charge
+        charge = ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
 
-        #print(opdm)
-        print("    %5i %20.12lf %20.12lf %20.12lf %20.12lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm, epsilon_total[nbands - 1] ) )
+        print("    %5i %20.12lf %20.12lf %20.12lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm ) )
+        #print("xc energy = %20.12lf" % ( xc_energy ) )
+        #print("one-electron energy = %20.12lf" % ( np.real(one_electron_energy) ) )
+        #print("coulomb energy = %20.12lf" % ( np.real(coulomb_energy) ) )
+        #print("charge = %20.12lf" % ( charge ) ) 
+
         rho = new_rho
 
         if ( rho_diff_norm < 1e-6 and energy_diff < 1e-6 ) :
@@ -718,17 +840,16 @@ def main():
 
     print('    ==> energy components <==')
     print('')
-    print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
-    print('    nuclear repulsion energy: %20.12lf' % ( cell.energy_nuc() ) )
-    print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
+    #print('    ewald correction:         %20.12lf' % ( ewald ) )
+    print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
+    print('    one-electron energy:      %20.12lf' % ( np.real(one_electron_energy) ) )
+    print('    coulomb energy:           %20.12lf' % ( np.real(coulomb_energy) ) )
     print('    xc energy:                %20.12lf' % ( xc_energy ) )
     print('')
-    print('    total energy:             %20.12lf' % ( np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung ) )
+    print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc ) )
     print('')
 
-    assert np.isclose( -1.534165431994, np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung )
-
-    #print(done',np.linalg.norm(rhog),np.linalg.norm(vg))
+    #assert np.isclose( -1.534165431994, np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung )
 
 if __name__ == "__main__":
     main()
