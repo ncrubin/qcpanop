@@ -83,7 +83,7 @@ def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
     g6 = g2 * g4
 
     vsgl=np.exp(-g2*rloc2/2.)*(-4.*np.pi*Zion/g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-g2*rloc2)+c3*(15.-10.*g2*rloc2+g4*rloc4)+c4*(105.-105.*g2*rloc2+21.*g4*rloc4-g6*rloc6)))
-    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc-Zion) #|G|^2->0 limit ... AED changed sign
+    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit ... AED unsure about sign
 
     vsg[largeind] = vsgl
     vsg[smallind] = vsgs
@@ -191,7 +191,7 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
 
         gth_pseudopotential[aa, aa:] = 0.0
         for I in range(0, len(basis.SI)):
-            gth_pseudopotential[aa, aa:] += ( vsg_local + 0.0 * vsg_nonlocal ) * basis.SI[I][inds]
+            gth_pseudopotential[aa, aa:] += ( vsg_local + vsg_nonlocal ) * basis.SI[I][inds]
 
     return gth_pseudopotential
 
@@ -522,10 +522,24 @@ def main():
     lattice_vectors[2,1] = c * dum2
     lattice_vectors[2,2] = c * np.sqrt(1.0 - dum1*dum1 - dum2*dum2)
 
-    cell = gto.M(a = lattice_vectors,
-                 atom = 'H 0.944875937789368   0.545524311657879   2.30951017631385; H 0.0000000   1.091048812290946   0.76983672543795',
+    #cell = gto.M(a = lattice_vectors,
+    #             atom = 'H 0.944875937789368   0.545524311657879   2.30951017631385; H 0.0000000   1.091048812290946   0.76983672543795',
+    #             unit = 'bohr',
+    #             basis = 'cc-pvdz',
+    #             verbose = 100,
+    #             ke_cutoff = ke_cutoff,
+    #             precision = 1.0e-8,
+    #             #spin = 1,
+    #             dimension = 3)
+
+    # build unit cell
+    ase_atom = bulk('Si', 'diamond', a = 10.26)
+
+    cell = gto.M(a = ase_atom.cell,
+                 atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom),
                  unit = 'bohr',
-                 basis = 'cc-pvdz',
+                 basis = 'gth-dzv',
+                 pseudo = 'gth-pade',
                  verbose = 100,
                  ke_cutoff = ke_cutoff,
                  precision = 1.0e-8,
@@ -581,8 +595,8 @@ def main():
 
     # electron-nucleus potential
     # TODO: make flexible for pseudopotential or not
-    #valence_charges = np.array([gth_params.Zion, gth_params.Zion])
-    valence_charges = cell.atom_charges()
+    valence_charges = np.array([int(gth_params.Zion), int(gth_params.Zion)])
+    #valence_charges = cell.atom_charges()
     vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
 
     # number of alpha and beta bands
@@ -637,10 +651,10 @@ def main():
             fock += get_potential(basis, k, j, v_coulomb)
 
             # get potential (nuclear-electronic)
-            fock += get_potential(basis, k, j, vne)
+            #fock += get_potential(basis, k, j, vne)
 
             # get pseudopotential
-            #fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
+            fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
 
             # get kinetic energy
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
@@ -660,7 +674,8 @@ def main():
 
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            oei = get_potential(basis, k, j, vne)
+            #oei = get_potential(basis, k, j, vne)
+            oei = get_gth_pseudopotential(basis, gth_params, k, j, omega)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
             np.fill_diagonal(oei, diagonals)
 
@@ -710,10 +725,10 @@ def main():
             fock += get_potential(basis, k, j, v_coulomb)
 
             # get potential (nuclear-electronic)
-            fock += get_potential(basis, k, j, vne)
+            #fock += get_potential(basis, k, j, vne)
 
             # get pseudopotential
-            #fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
+            fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
 
             # get kinetic energy
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
@@ -727,7 +742,8 @@ def main():
 
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            oei = get_potential(basis, k, j, vne)
+            #oei = get_potential(basis, k, j, vne)
+            oei = get_gth_pseudopotential(basis, gth_params, k, j, omega)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
             np.fill_diagonal(oei, diagonals)
 
@@ -839,7 +855,7 @@ def main():
 
         rho = new_rho
 
-        if ( rho_diff_norm < 1e-6 and energy_diff < 1e-6 ) :
+        if ( rho_diff_norm < 1e-4 and energy_diff < 1e-5 ) :
             break
 
         scf_iter += 1
