@@ -593,11 +593,16 @@ def main():
     nbeta = int(total_charge / 2)
     nalpha = total_charge - nbeta
 
-    print('    no. k-points:        %20i' % ( len(k) ) )
-    print('    no. basis functions: %20i' % ( len(basis.g) ) )
-    print('    total_charge:        %20i' % ( total_charge ) )
-    print('    no. alpha bands:     %20i' % ( nalpha ) )
-    print('    no. beta bands:      %20i' % ( nbeta ) )
+    guess_mix = True
+    damp_coulomb_potential = True
+
+    print('    no. k-points:           %20i' % ( len(k) ) )
+    print('    no. basis functions:    %20i' % ( len(basis.g) ) )
+    print('    total_charge:           %20i' % ( total_charge ) )
+    print('    no. alpha bands:        %20i' % ( nalpha ) )
+    print('    no. beta bands:         %20i' % ( nbeta ) )
+    print('    break spin symmetry:    %20s' % ( "yes" if guess_mix is True else "no" ) )
+    print('    damp coulomb potential: %20s' % ( "yes" if damp_coulomb_potential is True else "no" ) )
 
     print("")
     print("    ==> Begin SCF <==")
@@ -643,7 +648,13 @@ def main():
             np.fill_diagonal(fock, diagonals)
 
             # diagonalize fock matrix
-            epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*(nalpha+nbeta)-1))
+            epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nalpha))
+            
+            # break spin symmetry?
+            if guess_mix is True and scf_iter == 0:
+                tmp = 0.5 * ( Calpha[:, nalpha-1] + Calpha[:, nalpha] )
+                Calpha[:, nalpha-1] = tmp
+                Calpha[:, nalpha] = tmp
 
             # one-electron part of the energy 
 
@@ -710,7 +721,7 @@ def main():
             np.fill_diagonal(fock, diagonals)
 
             # diagonalize fock matrix
-            epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,2*(nalpha+nbeta)-1))
+            epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
 
             # one-electron part of the energy 
 
@@ -754,6 +765,7 @@ def main():
 
                 new_rho_beta += ( 1.0 / len(k) ) * np.absolute(occ)**2.0
 
+            #print(epsilon_alpha[nalpha-1], epsilon_beta[nbeta-1])
 
         # LDA potential
         cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
@@ -787,10 +799,13 @@ def main():
         #print('    total energy:             %20.12lf' % ( new_total_energy ) )
  
         # coulomb potential 
-        new_rho = new_rho_alpha + new_rho_beta
+        factor = 1.0
+        if damp_coulomb_potential is True:
+           factor = 0.5
+        new_rho = factor * ( new_rho_alpha + new_rho_beta ) + (1.0 - factor) * rho
+
         tmp = np.fft.ifftn(new_rho)
         for myg in range( len(basis.g) ):
-            #rhog[myg] = np.real( tmp[ get_miller_indices(myg, basis) ] )
             rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         # TODO: change basis.g2 to be complex valued?
