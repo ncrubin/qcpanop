@@ -83,7 +83,7 @@ def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
     g6 = g2 * g4
 
     vsgl=np.exp(-g2*rloc2/2.)*(-4.*np.pi*Zion/g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-g2*rloc2)+c3*(15.-10.*g2*rloc2+g4*rloc4)+c4*(105.-105.*g2*rloc2+21.*g4*rloc4-g6*rloc6)))
-    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit ... AED unsure about sign
+    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit 
 
     vsg[largeind] = vsgl
     vsg[smallind] = vsgs
@@ -195,7 +195,7 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
 
     return gth_pseudopotential
 
-def get_potential(basis, k, kid, vg):
+def get_potential(basis, kid, vg):
 
     """
 
@@ -621,17 +621,17 @@ def main():
             fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
 
             # get potential (dft)
-            fock += get_potential(basis, k, j, v_dft_alpha)
+            fock += get_potential(basis, j, v_dft_alpha)
 
             # get potential (coulomb)
-            fock += get_potential(basis, k, j, v_coulomb)
+            fock += get_potential(basis, j, v_coulomb)
 
             if use_pseudopotential: 
                 # get pseudopotential
                 fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
             else:
                 # get potential (nuclear-electronic)
-                fock += get_potential(basis, k, j, vne)
+                fock += get_potential(basis, j, vne)
 
             # get kinetic energy
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
@@ -654,7 +654,7 @@ def main():
             if use_pseudopotential: 
                 oei = get_gth_pseudopotential(basis, gth_params, k, j, omega)
             else:
-                oei = get_potential(basis, k, j, vne)
+                oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
             np.fill_diagonal(oei, diagonals)
 
@@ -670,7 +670,7 @@ def main():
 
             # oei = 1/2 J
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            oei = get_potential(basis, k, j, v_coulomb)
+            oei = get_potential(basis, j, v_coulomb)
 
             oei = oei + oei.conj().T
             for pp in range(basis.n_plane_waves_per_k[j]):
@@ -698,17 +698,17 @@ def main():
             fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
 
             # get potential (dft)
-            fock += get_potential(basis, k, j, v_dft_beta)
+            fock += get_potential(basis, j, v_dft_beta)
 
             # get potential (coulomb)
-            fock += get_potential(basis, k, j, v_coulomb)
+            fock += get_potential(basis, j, v_coulomb)
 
             if use_pseudopotential: 
                 # get pseudopotential
                 fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
             else:
                 # get potential (nuclear-electronic)
-                fock += get_potential(basis, k, j, vne)
+                fock += get_potential(basis, j, vne)
 
             # get kinetic energy
             kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
@@ -725,7 +725,7 @@ def main():
             if use_pseudopotential: 
                 oei = get_gth_pseudopotential(basis, gth_params, k, j, omega)
             else:
-                oei = get_potential(basis, k, j, vne)
+                oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
             np.fill_diagonal(oei, diagonals)
 
@@ -741,7 +741,7 @@ def main():
 
             # oei = 1/2 J
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            oei = get_potential(basis, k, j, v_coulomb)
+            oei = get_potential(basis, j, v_coulomb)
 
             oei = oei + oei.conj().T
             for pp in range(basis.n_plane_waves_per_k[j]):
