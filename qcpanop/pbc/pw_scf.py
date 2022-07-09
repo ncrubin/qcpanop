@@ -202,7 +202,6 @@ def get_potential(basis, kid, vg):
     get the potential matrix for given k-point
 
     :param basis: plane wave basis information
-    :param k: the list of k-points
     :param kid: index for a given k-point
     :param vg: full potential container
     :return potential: the pseudopotential matrix
