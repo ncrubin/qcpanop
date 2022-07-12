@@ -764,15 +764,11 @@ def main():
 
             #print(epsilon_alpha[nalpha-1], epsilon_beta[nbeta-1])
 
-        # LDA potential
-        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
-        vr = 4.0 / 3.0 * cx * np.power( new_rho , 1.0 / 3.0 )
-
         # LSDA potential
-        alpha = 2.0 / 3.0
-        c = - 9.0 / 8.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) * alpha * 2.0 ** ( 1.0 / 3.0 )
-        vr_alpha = 4.0 / 3.0 * c * np.power( new_rho_alpha , 1.0 / 3.0 )
-        vr_beta = 4.0 / 3.0 * c * np.power( new_rho_beta , 1.0 / 3.0 )
+        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
+
+        vr_alpha = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( new_rho_alpha , 1.0 / 3.0 )
+        vr_beta  = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( new_rho_beta , 1.0 / 3.0 )
 
         tmp = np.fft.ifftn(vr_alpha)
         for myg in range( len(basis.g) ):
@@ -782,12 +778,9 @@ def main():
         for myg in range( len(basis.g) ):
             v_dft_beta[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        # LDA XC energy
-        #xc_energy = cx * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho, 4.0/3.0))
-
         # LSDA XC energy
-        xc_energy = c * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
-        xc_energy += c * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
+        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
+        xc_energy += cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
 
         #print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
         #print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
