@@ -20,34 +20,139 @@ import pyscf.pbc.tools.pyscf_ase as pyscf_ase
 
 import scipy
 
+
 # GTH pseudopotential parameters
 class gth_pseudopotential_parameters():
 
-    # parameters for local contribution to pseudopotential (default Si)
+    def __init__(self, cell):
 
-    c1 = -7.336103
-    c2 = 0.0
-    c3 = 0.0
-    c4 = 0.0
-    rloc = 0.44
-    Zion = 4.0
+        """
 
-    # parameters for non-local contribution to pseudopotential (default Si)
+        get the GTH pseudopotential parameters
 
-    # hlij
-    hgth = np.zeros((2,3,3),dtype='float64')
-    hgth[0, 0, 0] = 5.906928
-    hgth[0, 1, 1] = 3.258196
-    hgth[0, 0, 1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-    hgth[0, 1, 0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-    hgth[1, 0, 0] = 2.727013
+        :param cell: the unit cell
 
-    # rs, rp, max l, max i
-    r0 = 0.422738
-    r1 = 0.484278
-    rl = [r0, r1]
-    lmax = 2
-    imax = 2
+        """
+
+        # TODO: generalize for more than a single atom in the cell ...
+        if ( len(cell._atom) > 1 ) :
+            raise Exception('pseudopotentials currently only work with a single atom in the units')
+
+        element = cell._atom[0][0]
+
+        pp = cell._pseudo[element]
+
+        # parameters for local contribution to pseudopotential
+
+        # Zion
+        self.Zion = 0.0
+        for i in range(0,len(pp[0])):
+            self.Zion += pp[0][i]
+
+        # rloc
+        self.rloc = pp[1]
+
+        # c1, c2, c3, c4
+        self.local_cn = np.zeros(4, dtype = 'float64')
+        for i in range(0,pp[2]):
+            self.local_cn[i] = pp[3][i]
+        
+        # parameters for non-local contribution to pseudopotential
+
+        # lmax
+        self.lmax = pp[4]
+
+        # imax
+        self.imax = 0
+        for i in range(0,self.lmax):
+            myi = pp[5+i][1]
+            if myi > self.imax :
+                self.imax = myi
+
+        # rl and h
+        self.rl = np.zeros(self.lmax, dtype='float64')
+        self.hgth = np.zeros((self.lmax,3,3),dtype='float64')
+        for l, proj in enumerate(pp[5:]):
+
+            self.rl[l], nl, hl = proj
+            hl = np.asarray(hl)
+            my_h = np.zeros((3, 3), dtype=hl.dtype)
+            if nl > 0:
+                my_h[:hl.shape[0], :hl.shape[1]] = hl
+                for i in range (0,3):
+                    for j in range (0,3):
+                        self.hgth[l, i, j] = my_h[i, j]
+
+        #print('lmax',self.lmax)
+        #print('imax',self.imax)
+        #print('rl',self.rl)
+        #print('h',self.hgth)
+        #exit()
+
+        #hgth[0, 0, 0] = 8.31460936
+        #hgth[0, 1, 1] = 3.01160535
+        #hgth[0, 0, 1] = -2.33277947
+        #hgth[0, 1, 0] = -2.33277947
+        #hgth[1, 0, 0] = 2.33241791
+
+        ## rs, rp, max l, max i
+        #r0 = 0.44465247
+        #r1 = 0.50279207
+        #rl = [r0, r1]
+        #lmax = 2
+        #imax = 2
+
+        # parameters for local contribution to pseudopotential (default Si)
+
+        #c1 = -7.336103
+        #c2 = 0.0
+        #c3 = 0.0
+        #c4 = 0.0
+        #rloc = 0.44
+        #Zion = 4.0
+
+        # parameters for non-local contribution to pseudopotential (default Si)
+
+        # hlij
+        #hgth = np.zeros((2,3,3),dtype='float64')
+        #hgth[0, 0, 0] = 5.906928
+        #hgth[0, 1, 1] = 3.258196
+        #hgth[0, 0, 1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
+        #hgth[0, 1, 0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
+        #hgth[1, 0, 0] = 2.727013
+
+        ## rs, rp, max l, max i
+        #r0 = 0.422738
+        #r1 = 0.484278
+        #rl = [r0, r1]
+        #lmax = 2
+        #imax = 2
+
+        #Si
+        #0.44465247 2
+        #l = 0
+        #[[ 8.31460936 -2.33277947  0.        ]
+        # [-2.33277947  3.01160535  0.        ]
+        # [ 0.          0.          0.        ]]
+        #0.50279207 1
+        #l = 1
+        #[[2.33241791 0.         0.        ]
+        # [0.         0.         0.        ]
+        # [0.         0.         0.        ]]
+
+        #hgth = np.zeros((2,3,3),dtype='float64')
+        #hgth[0, 0, 0] = 8.31460936
+        #hgth[0, 1, 1] = 3.01160535
+        #hgth[0, 0, 1] = -2.33277947
+        #hgth[0, 1, 0] = -2.33277947
+        #hgth[1, 0, 0] = 2.33241791
+
+        ## rs, rp, max l, max i
+        #r0 = 0.44465247
+        #r1 = 0.50279207
+        #rl = [r0, r1]
+        #lmax = 2
+        #imax = 2
 
 def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
 
@@ -61,10 +166,10 @@ def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
     :return: local contribution to GTH pseudopotential
     """
 
-    c1 = gth_params.c1
-    c2 = gth_params.c2
-    c3 = gth_params.c3
-    c4 = gth_params.c4
+    c1 = gth_params.local_cn[0]
+    c2 = gth_params.local_cn[1]
+    c3 = gth_params.local_cn[2]
+    c4 = gth_params.local_cn[3]
     rloc = gth_params.rloc
     Zion = gth_params.Zion
 
@@ -141,11 +246,10 @@ def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
     hgth = gth_params.hgth
 
     vsg = 0.0
-    for l in [0,1]:
+    for l in range(0,gth_params.lmax):
         vsgij = vsgsp = 0.0
-        for i in [0,1]:
-            for j in [0,1]:
-                #vsgij+=thepow[l]*pg[l,i,gind]*hgth[l,i,j]*pg[l,j,:]
+        for i in range(0,gth_params.imax):
+            for j in range(0,gth_params.imax):
                 vsgij += pg[l,i,gind] * hgth[l,i,j] * pg[l,j,:]
 
         for m in range(-l,l+1):
@@ -319,7 +423,7 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 
     # g, g2, and miller indices
     g = np.empty(shape=[0,3],dtype='float64')
-    g2 = np.empty(shape=[0,0],dtype='float64')
+    g2 = np.empty(shape=[0,0],dtype='complex128')
     miller = np.empty(shape=[0,3],dtype='int')
 
     for i in np.arange(-reciprocal_max_dim_1, reciprocal_max_dim_1+1):
@@ -494,7 +598,7 @@ def main():
     print('')
 
     # kinetic energy cutoff
-    ke_cutoff = 300.0 / 27.21138602
+    ke_cutoff = 500.0 / 27.21138602
 
     # desired number of k-points in each direction
     n_k_points = [1, 1, 1]
@@ -502,19 +606,27 @@ def main():
     # define unit cell 
 
     # build unit cell
-    ase_atom = bulk('Si', 'diamond', a = 10.26)
+    #ase_atom = bulk('Si', 'diamond', a = 10.26)
+
+    #ase_atom = bulk('H', 'diamond', a = 8.88)
     #ase_atom = bulk('H', 'diamond', a = 10.26)
 
     # do we need pseudopotential?
     use_pseudopotential = True
 
-    cell = gto.M(a = ase_atom.cell,
-                 atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom),
+    a = np.eye(3) * 4.0
+    atom = 'Ne 0 0 0'
+
+    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom),
+    #a = ase_atom.cell,
+
+    cell = gto.M(a = a,
+                 atom = atom,
                  unit = 'bohr',
-                 basis = 'gth-dzv',
-                 pseudo = 'gth-pade',
+                 basis = 'gth-dzv', #'cc-pvtz', #gth-dzv',
+                 pseudo = 'gth-blyp',
                  verbose = 100,
-                 ke_cutoff = ke_cutoff,
+                 #ke_cutoff = ke_cutoff,
                  precision = 1.0e-8,
                  #spin = 1,
                  dimension = 3)
@@ -531,7 +643,8 @@ def main():
     # run pyscf dft
     from pyscf import dft, scf, pbc
     #kmf = pbc.scf.KUHF(cell, kpts = k).run()
-    kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = k).run()
+    #kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = k).run()
+    #kmf = pbc.scf.KUHF(cell, kpts = k).run()
     #exit()
 
     # get madelung constant
@@ -547,7 +660,7 @@ def main():
     basis = plane_wave_basis(ke_cutoff, k, cell)
 
     # pseudopotential parameters (default Si)
-    gth_params = gth_pseudopotential_parameters()
+    gth_params = gth_pseudopotential_parameters(cell)
 
     # potential in reciprocal space
     v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
@@ -568,8 +681,12 @@ def main():
 
     # charges
     valence_charges = cell.atom_charges()
+    
     if use_pseudopotential: 
-        valence_charges = np.array([int(gth_params.Zion), int(gth_params.Zion)])
+        if len(valence_charges) > 1 :
+            raise Exception('pseudopotentials currently only work with a single atom in the units')
+        for i in range (0,len(valence_charges)):
+            valence_charges[i] = int(gth_params.Zion)
 
     # electron-nucleus potential
     vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
@@ -582,7 +699,10 @@ def main():
     nbeta = int(total_charge / 2)
     nalpha = total_charge - nbeta
 
+    # break spin symmetry?
     guess_mix = True
+
+    # damp coulomb potential (helps with convergence sometimes)
     damp_coulomb_potential = True
 
     print('    no. k-points:           %20i' % ( len(k) ) )
@@ -798,12 +918,7 @@ def main():
         for myg in range( len(basis.g) ):
             rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        # TODO: change basis.g2 to be complex valued?
-        g2 = np.zeros(len(basis.g2),dtype='complex128')
-        for myg in range( len(basis.g2) ):
-            g2[myg] = basis.g2[myg]
-        
-        v_coulomb = 4.0 * np.pi * np.divide(rhog, g2, out=np.zeros_like(g2), where = g2 != 0.0) # / omega
+        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
 
         # total energy
         new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc
