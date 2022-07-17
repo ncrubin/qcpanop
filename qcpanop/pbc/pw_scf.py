@@ -32,166 +32,129 @@ class gth_pseudopotential_parameters():
 
         :param cell: the unit cell
 
+        Attributes
+        ----------
+
+        Zion: list of th valence charges of all centers
+        rloc: list of rloc pseudopotential parameters for all centers (local)
+        local_cn: list of c coefficients (c1, c2, c3, c4) for all centers (local)
+        lmax: list of maximum l value for all centers (nonlocal)
+        imax: list of maximum i value for all centers (nonlocal)
+        rl: list of rl values for all centers (nonlocal)
+        hgth: list of h matrices for all centers (nonlocal)
+
         """
 
+        natom = len(cell._atom)
+
         # TODO: generalize for more than a single atom in the cell ...
-        if ( len(cell._atom) > 1 ) :
-            raise Exception('pseudopotentials currently only work with a single atom in the units')
+        #if ( natom > 1 ) :
+        #    raise Exception('pseudopotentials currently only work with a single atom in the unit cell')
 
-        element = cell._atom[0][0]
+        self.Zion = np.zeros(natom, dtype = 'float64')
+        self.rloc = np.zeros(natom, dtype = 'float64')
+        self.local_cn = np.zeros( (natom, 4), dtype = 'float64')
 
-        pp = cell._pseudo[element]
+        self.lmax = np.zeros(natom, dtype = 'int64')
+        self.imax = np.zeros(natom, dtype = 'int64')
+        self.rl = np.zeros( (natom, 3), dtype='float64') # lmax = 3
+        self.hgth = np.zeros((natom, 3, 3, 3),dtype='float64') # lmax = 3; imax = 3
 
-        # parameters for local contribution to pseudopotential
+        for center in range (0,natom):
 
-        # Zion
-        self.Zion = 0.0
-        for i in range(0,len(pp[0])):
-            self.Zion += pp[0][i]
+            element = cell._atom[center][0]
 
-        # rloc
-        self.rloc = pp[1]
+            pp = cell._pseudo[element]
 
-        # c1, c2, c3, c4
-        self.local_cn = np.zeros(4, dtype = 'float64')
-        for i in range(0,pp[2]):
-            self.local_cn[i] = pp[3][i]
-        
-        # parameters for non-local contribution to pseudopotential
+            # parameters for local contribution to pseudopotential
 
-        # lmax
-        self.lmax = pp[4]
+            # Zion
+            self.Zion[center] = 0.0
+            for i in range(0,len(pp[0])):
+                self.Zion[center] += pp[0][i]
 
-        # imax
-        self.imax = 0
-        for i in range(0,self.lmax):
-            myi = pp[5+i][1]
-            if myi > self.imax :
-                self.imax = myi
+            # rloc
+            self.rloc[center] = pp[1]
 
-        # rl and h
-        self.rl = np.zeros(self.lmax, dtype='float64')
-        self.hgth = np.zeros((self.lmax,3,3),dtype='float64')
-        for l, proj in enumerate(pp[5:]):
+            # c1, c2, c3, c4
+            for i in range(0,pp[2]):
+                self.local_cn[center][i] = pp[3][i]
+            
+            # parameters for non-local contribution to pseudopotential
 
-            self.rl[l], nl, hl = proj
-            hl = np.asarray(hl)
-            my_h = np.zeros((3, 3), dtype=hl.dtype)
-            if nl > 0:
-                my_h[:hl.shape[0], :hl.shape[1]] = hl
-                for i in range (0,3):
-                    for j in range (0,3):
-                        self.hgth[l, i, j] = my_h[i, j]
+            # lmax
+            self.lmax[center] = pp[4]
 
-        #print('lmax',self.lmax)
-        #print('imax',self.imax)
-        #print('rl',self.rl)
-        #print('h',self.hgth)
-        #exit()
+            if self.lmax[center] > 3:
+                raise Exception('pseudopotentials currently only work with lmax <= 3')
 
-        #hgth[0, 0, 0] = 8.31460936
-        #hgth[0, 1, 1] = 3.01160535
-        #hgth[0, 0, 1] = -2.33277947
-        #hgth[0, 1, 0] = -2.33277947
-        #hgth[1, 0, 0] = 2.33241791
+            # imax
+            self.imax[center] = 0
+            for i in range(0,self.lmax[center]):
+                myi = pp[5+i][1]
+                if myi > self.imax[center] :
+                    self.imax[center] = myi
 
-        ## rs, rp, max l, max i
-        #r0 = 0.44465247
-        #r1 = 0.50279207
-        #rl = [r0, r1]
-        #lmax = 2
-        #imax = 2
+            if self.imax[center] > 3:
+                raise Exception('pseudopotentials currently only work with imax <= 3')
 
-        # parameters for local contribution to pseudopotential (default Si)
+            # rl and h
+            for l, proj in enumerate(pp[5:]):
 
-        #c1 = -7.336103
-        #c2 = 0.0
-        #c3 = 0.0
-        #c4 = 0.0
-        #rloc = 0.44
-        #Zion = 4.0
+                self.rl[center][l], nl, hl = proj
+                hl = np.asarray(hl)
+                my_h = np.zeros((3, 3), dtype=hl.dtype)
+                if nl > 0:
+                    my_h[:hl.shape[0], :hl.shape[1]] = hl
+                    for i in range (0,3):
+                        for j in range (0,3):
+                            self.hgth[center][l, i, j] = my_h[i, j]
 
-        # parameters for non-local contribution to pseudopotential (default Si)
 
-        # hlij
-        #hgth = np.zeros((2,3,3),dtype='float64')
-        #hgth[0, 0, 0] = 5.906928
-        #hgth[0, 1, 1] = 3.258196
-        #hgth[0, 0, 1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-        #hgth[0, 1, 0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-        #hgth[1, 0, 0] = 2.727013
-
-        ## rs, rp, max l, max i
-        #r0 = 0.422738
-        #r1 = 0.484278
-        #rl = [r0, r1]
-        #lmax = 2
-        #imax = 2
-
-        #Si
-        #0.44465247 2
-        #l = 0
-        #[[ 8.31460936 -2.33277947  0.        ]
-        # [-2.33277947  3.01160535  0.        ]
-        # [ 0.          0.          0.        ]]
-        #0.50279207 1
-        #l = 1
-        #[[2.33241791 0.         0.        ]
-        # [0.         0.         0.        ]
-        # [0.         0.         0.        ]]
-
-        #hgth = np.zeros((2,3,3),dtype='float64')
-        #hgth[0, 0, 0] = 8.31460936
-        #hgth[0, 1, 1] = 3.01160535
-        #hgth[0, 0, 1] = -2.33277947
-        #hgth[0, 1, 0] = -2.33277947
-        #hgth[1, 0, 0] = 2.33241791
-
-        ## rs, rp, max l, max i
-        #r0 = 0.44465247
-        #r1 = 0.50279207
-        #rl = [r0, r1]
-        #lmax = 2
-        #imax = 2
-
-def get_local_pseudopotential_gth(g2, omega, gth_params, tiny = 1e-8):
+def get_local_pseudopotential_gth(SI, g2, omega, gth_params, tiny = 1e-8):
 
     """
 
     Construct and return local contribution to GTH pseudopotential
 
+    :param SI: structure factor
     :param g2: square modulus of plane wave basis functions
     :param omega: unit cell volume
     :param gth_params: GTH pseudopotential parameters
     :return: local contribution to GTH pseudopotential
     """
 
-    c1 = gth_params.local_cn[0]
-    c2 = gth_params.local_cn[1]
-    c3 = gth_params.local_cn[2]
-    c4 = gth_params.local_cn[3]
-    rloc = gth_params.rloc
-    Zion = gth_params.Zion
+    vsg = np.zeros(len(g2),dtype='complex128')
 
-    vsg = np.zeros(len(g2),dtype='float64')
-    largeind = g2 > tiny
-    smallind = g2 <= tiny #|G|^2->0 limit
+    for center in range (0, len(gth_params.local_cn)) :
 
-    g2 = g2[largeind]
+        c1 = gth_params.local_cn[center][0]
+        c2 = gth_params.local_cn[center][1]
+        c3 = gth_params.local_cn[center][2]
+        c4 = gth_params.local_cn[center][3]
+        rloc = gth_params.rloc[center]
+        Zion = gth_params.Zion[center]
 
-    rloc2 = rloc * rloc
-    rloc3 = rloc * rloc2
-    rloc4 = rloc2 * rloc2
-    rloc6 = rloc2 * rloc4
+        largeind = g2 > tiny
+        smallind = g2 <= tiny #|G|^2->0 limit
 
-    g4 = g2 * g2
-    g6 = g2 * g4
+        my_g2 = g2[largeind]
+        SI_large = SI[center,largeind]
+        SI_small = SI[center,smallind]
 
-    vsgl=np.exp(-g2*rloc2/2.)*(-4.*np.pi*Zion/g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-g2*rloc2)+c3*(15.-10.*g2*rloc2+g4*rloc4)+c4*(105.-105.*g2*rloc2+21.*g4*rloc4-g6*rloc6)))
-    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit 
+        rloc2 = rloc * rloc
+        rloc3 = rloc * rloc2
+        rloc4 = rloc2 * rloc2
+        rloc6 = rloc2 * rloc4
 
-    vsg[largeind] = vsgl
-    vsg[smallind] = vsgs
+        g4 = my_g2 * my_g2
+        g6 = my_g2 * g4
+
+        vsgl = SI_large * np.exp(-my_g2*rloc2/2.)*(-4.*np.pi*Zion/my_g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-my_g2*rloc2)+c3*(15.-10.*my_g2*rloc2+g4*rloc4)+c4*(105.-105.*my_g2*rloc2+21.*g4*rloc4-g6*rloc6)))
+        vsgs = SI_small * 2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit 
+
+        vsg[largeind] += vsgl
+        vsg[smallind] += vsgs
 
     return vsg / omega
 
@@ -209,9 +172,10 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
     :return: spherical harmonics and projectors for GTH pseudopotential
     """
 
-    rl = gth_params.rl
-    lmax = gth_params.lmax
-    imax = gth_params.imax
+    # TODO: generalize for multiple centers
+    rl = gth_params.rl[0]
+    lmax = gth_params.lmax[0]
+    imax = gth_params.imax[0]
 
     rgv,thetagv,phigv=pbcgto.pseudo.pp.cart2polar(gv)
 
@@ -243,13 +207,15 @@ def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
     :return: non-local contribution to GTH pseudopotential
     """
 
-    hgth = gth_params.hgth
+    # TODO: loop over each center and accumulate pseudopotentials
+
+    hgth = gth_params.hgth[0]
 
     vsg = 0.0
-    for l in range(0,gth_params.lmax):
+    for l in range(0,gth_params.lmax[0]):
         vsgij = vsgsp = 0.0
-        for i in range(0,gth_params.imax):
-            for j in range(0,gth_params.imax):
+        for i in range(0,gth_params.imax[0]):
+            for j in range(0,gth_params.imax[0]):
                 vsgij += pg[l,i,gind] * hgth[l,i,j] * pg[l,j,:]
 
         for m in range(-l,l+1):
@@ -289,13 +255,16 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
         #inds = basis.miller_to_g[gdiff.T.tolist()]
         inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
-        vsg_local = get_local_pseudopotential_gth(basis.g2[inds], omega, gth_params)
+        vsg_local = get_local_pseudopotential_gth(basis.SI[:,inds], basis.g2[inds], omega, gth_params)
 
         vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, gth_params, omega)[aa:]
 
         gth_pseudopotential[aa, aa:] = 0.0
+        # TODO: structure factor should not be included here
         for I in range(0, len(basis.SI)):
-            gth_pseudopotential[aa, aa:] += ( vsg_local + vsg_nonlocal ) * basis.SI[I][inds]
+            gth_pseudopotential[aa, aa:] += vsg_nonlocal * basis.SI[I][inds]
+
+        gth_pseudopotential[aa, aa:] += vsg_local 
 
     return gth_pseudopotential
 
@@ -609,7 +578,7 @@ def main():
     #ase_atom = bulk('Si', 'diamond', a = 10.26)
 
     #ase_atom = bulk('H', 'diamond', a = 8.88)
-    #ase_atom = bulk('H', 'diamond', a = 10.26)
+    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
 
     # do we need pseudopotential?
     use_pseudopotential = True
@@ -617,13 +586,13 @@ def main():
     a = np.eye(3) * 4.0
     atom = 'Ne 0 0 0'
 
-    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom),
-    #a = ase_atom.cell,
+    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
+    #a = ase_atom.cell
 
     cell = gto.M(a = a,
                  atom = atom,
                  unit = 'bohr',
-                 basis = 'gth-dzv', #'cc-pvtz', #gth-dzv',
+                 basis = 'gth-szv', #'cc-pvtz', #gth-dzv',
                  pseudo = 'gth-blyp',
                  verbose = 100,
                  #ke_cutoff = ke_cutoff,
@@ -660,7 +629,8 @@ def main():
     basis = plane_wave_basis(ke_cutoff, k, cell)
 
     # pseudopotential parameters (default Si)
-    gth_params = gth_pseudopotential_parameters(cell)
+    if use_pseudopotential: 
+        gth_params = gth_pseudopotential_parameters(cell)
 
     # potential in reciprocal space
     v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
@@ -683,10 +653,8 @@ def main():
     valence_charges = cell.atom_charges()
     
     if use_pseudopotential: 
-        if len(valence_charges) > 1 :
-            raise Exception('pseudopotentials currently only work with a single atom in the units')
         for i in range (0,len(valence_charges)):
-            valence_charges[i] = int(gth_params.Zion)
+            valence_charges[i] = int(gth_params.Zion[i])
 
     # electron-nucleus potential
     vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
