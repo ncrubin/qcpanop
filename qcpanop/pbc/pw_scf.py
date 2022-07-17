@@ -47,10 +47,6 @@ class gth_pseudopotential_parameters():
 
         natom = len(cell._atom)
 
-        # TODO: generalize for more than a single atom in the cell ...
-        #if ( natom > 1 ) :
-        #    raise Exception('pseudopotentials currently only work with a single atom in the unit cell')
-
         self.Zion = np.zeros(natom, dtype = 'float64')
         self.rloc = np.zeros(natom, dtype = 'float64')
         self.local_cn = np.zeros( (natom, 4), dtype = 'float64')
@@ -86,7 +82,7 @@ class gth_pseudopotential_parameters():
             self.lmax[center] = pp[4]
 
             if self.lmax[center] > 3:
-                raise Exception('pseudopotentials currently only work with lmax <= 3')
+                raise Exception('pseudopotentials currently only work with lmax <= 3. probably should change that.')
 
             # imax
             self.imax[center] = 0
@@ -96,7 +92,7 @@ class gth_pseudopotential_parameters():
                     self.imax[center] = myi
 
             if self.imax[center] > 3:
-                raise Exception('pseudopotentials currently only work with imax <= 3')
+                raise Exception('pseudopotentials currently only work with imax <= 3. probably should change that.')
 
             # rl and h
             for l, proj in enumerate(pp[5:]):
@@ -108,7 +104,7 @@ class gth_pseudopotential_parameters():
                     my_h[:hl.shape[0], :hl.shape[1]] = hl
                     for i in range (0,3):
                         for j in range (0,3):
-                            self.hgth[center][l, i, j] = my_h[i, j]
+                            self.hgth[center, l, i, j] = my_h[i, j]
 
 
 def get_local_pseudopotential_gth(SI, g2, omega, gth_params, tiny = 1e-8):
@@ -172,33 +168,41 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
     :return: spherical harmonics and projectors for GTH pseudopotential
     """
 
-    # TODO: generalize for multiple centers
-    rl = gth_params.rl[0]
-    lmax = gth_params.lmax[0]
-    imax = gth_params.imax[0]
+    # spherical polar representation of plane wave basis 
+    rgv, thetagv, phigv = pbcgto.pseudo.pp.cart2polar(gv)
 
-    rgv,thetagv,phigv=pbcgto.pseudo.pp.cart2polar(gv)
-
-    mmax = 2 * (lmax - 1) + 1
     gmax = len(gv)
 
-    spherical_harmonics_lm = np.zeros((lmax,mmax,gmax),dtype='complex128')
-    projector_li           = np.zeros((lmax,imax,gmax),dtype='complex128')
+    # number of atoms
+    natom = len(gth_params.local_cn)
 
-    for l in range(lmax):
-        for m in range(-l,l+1):
-            spherical_harmonics_lm[l,m+l,:] = scipy.special.sph_harm(m,l,phigv,thetagv)
-        for i in range(imax):
-            projector_li[l,i,:] = pbcgto.pseudo.pp.projG_li(rgv,l,i,rl[l])
+    lmax = np.amax(gth_params.lmax)
+    imax = np.amax(gth_params.imax)
+    mmax = 2 * (lmax - 1) + 1
+
+    # spherical harmonics should be independent of the center
+    spherical_harmonics_lm = np.zeros((lmax, mmax, gmax),dtype='complex128')
+
+    # projectors should be center-dependent
+    projector_li = np.zeros((natom, lmax, imax, gmax),dtype='complex128')
+
+    for center in range (0,natom) :
+
+        for l in range(lmax):
+            for m in range(-l,l+1):
+                spherical_harmonics_lm[l, m+l, :] = scipy.special.sph_harm(m,l,phigv,thetagv)
+            for i in range(imax):
+                projector_li[center, l, i, :] = pbcgto.pseudo.pp.projG_li(rgv, l, i, gth_params.rl[center, l])
 
     return spherical_harmonics_lm, projector_li
 
-def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
+def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
 
     """
 
     Construct and return non-local contribution to GTH pseudopotential
 
+    :param SI: structure factor
     :param sphg: angular part of plane wave basis
     :param pg: projectors 
     :param gind: plane wave basis function label 
@@ -207,21 +211,31 @@ def get_nonlocal_pseudopotential_gth(sphg, pg, gind, gth_params, omega):
     :return: non-local contribution to GTH pseudopotential
     """
 
-    # TODO: loop over each center and accumulate pseudopotentials
-
-    hgth = gth_params.hgth[0]
+    # number of atoms
+    natom = len(gth_params.local_cn)
 
     vsg = 0.0
-    for l in range(0,gth_params.lmax[0]):
-        vsgij = vsgsp = 0.0
-        for i in range(0,gth_params.imax[0]):
-            for j in range(0,gth_params.imax[0]):
-                vsgij += pg[l,i,gind] * hgth[l,i,j] * pg[l,j,:]
 
-        for m in range(-l,l+1):
-            vsgsp += sphg[l,m+l,gind] * sphg[l,m+l,:].conj()
+    for center in range (0, natom):
 
-        vsg += vsgij * vsgsp
+        my_h = gth_params.hgth[center]
+        my_pg = pg[center] 
+
+        tmp_vsg = 0.0
+
+        for l in range(0,gth_params.lmax[center]):
+            vsgij = vsgsp = 0.0
+            for i in range(0,gth_params.imax[center]):
+                for j in range(0,gth_params.imax[center]):
+                    vsgij += my_pg[l, i, gind] * my_h[l, i, j] * my_pg[l,j,:]
+
+            for m in range(-l,l+1):
+                vsgsp += sphg[l,m+l,gind] * sphg[l,m+l,:].conj()
+
+            tmp_vsg += vsgij * vsgsp
+
+        # accumulate with structure factors
+        vsg += tmp_vsg * SI[center][gind] * SI[center][:]
 
     return vsg / omega
 
@@ -255,16 +269,18 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
         #inds = basis.miller_to_g[gdiff.T.tolist()]
         inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
-        vsg_local = get_local_pseudopotential_gth(basis.SI[:,inds], basis.g2[inds], omega, gth_params)
+        vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], omega, gth_params)
 
-        vsg_nonlocal = get_nonlocal_pseudopotential_gth(sphg, pg, aa, gth_params, omega)[aa:]
+        vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, gth_params, omega)[aa:]
 
-        gth_pseudopotential[aa, aa:] = 0.0
+        gth_pseudopotential[aa, aa:] = vsg_local 
+        gth_pseudopotential[aa, aa:] += vsg_nonlocal 
+
         # TODO: structure factor should not be included here
-        for I in range(0, len(basis.SI)):
-            gth_pseudopotential[aa, aa:] += vsg_nonlocal * basis.SI[I][inds]
+        #gth_pseudopotential[aa, aa:] = 0.0
+        #for I in range(0, len(basis.SI)):
+        #    gth_pseudopotential[aa, aa:] += vsg_nonlocal * basis.SI[I][inds]
 
-        gth_pseudopotential[aa, aa:] += vsg_local 
 
     return gth_pseudopotential
 
@@ -584,7 +600,7 @@ def main():
     use_pseudopotential = True
 
     a = np.eye(3) * 4.0
-    atom = 'Ne 0 0 0'
+    atom = 'Ne 0 0 2'
 
     #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
     #a = ase_atom.cell
