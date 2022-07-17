@@ -235,7 +235,7 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
             tmp_vsg += vsgij * vsgsp
 
         # accumulate with structure factors
-        vsg += tmp_vsg * SI[center][gind] * SI[center][:]
+        vsg += tmp_vsg * SI[center][gind] * SI[center][:].conj()
 
     return vsg / omega
 
@@ -275,12 +275,6 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
 
         gth_pseudopotential[aa, aa:] = vsg_local 
         gth_pseudopotential[aa, aa:] += vsg_nonlocal 
-
-        # TODO: structure factor should not be included here
-        #gth_pseudopotential[aa, aa:] = 0.0
-        #for I in range(0, len(basis.SI)):
-        #    gth_pseudopotential[aa, aa:] += vsg_nonlocal * basis.SI[I][inds]
-
 
     return gth_pseudopotential
 
@@ -594,16 +588,16 @@ def main():
     #ase_atom = bulk('Si', 'diamond', a = 10.26)
 
     #ase_atom = bulk('H', 'diamond', a = 8.88)
-    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
+    ase_atom = bulk('Ne', 'diamond', a = 10.26)
 
     # do we need pseudopotential?
     use_pseudopotential = True
 
-    a = np.eye(3) * 4.0
-    atom = 'Ne 0 0 2'
+    #a = np.eye(3) * 4.0
+    #atom = 'Ne 0 0 2'
 
-    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
-    #a = ase_atom.cell
+    atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
+    a = ase_atom.cell
 
     cell = gto.M(a = a,
                  atom = atom,
