@@ -684,6 +684,7 @@ def main():
     damp_coulomb_potential = True
 
     print('    no. k-points:           %20i' % ( len(k) ) )
+    print('    KE cutoff (eV)          %20.2f' % ( ke_cutoff * 27.21138602 ) )
     print('    no. basis functions:    %20i' % ( len(basis.g) ) )
     print('    total_charge:           %20i' % ( total_charge ) )
     print('    no. alpha bands:        %20i' % ( nalpha ) )
