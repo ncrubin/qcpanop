@@ -20,6 +20,7 @@ import pyscf.pbc.tools.pyscf_ase as pyscf_ase
 
 import scipy
 
+from diis import DIIS
 
 # GTH pseudopotential parameters
 class gth_pseudopotential_parameters():
@@ -585,10 +586,10 @@ def main():
     # define unit cell 
 
     # build unit cell
-    #ase_atom = bulk('Si', 'diamond', a = 10.26)
+    ase_atom = bulk('Si', 'diamond', a = 10.26)
 
     #ase_atom = bulk('H', 'diamond', a = 8.88)
-    ase_atom = bulk('Ne', 'diamond', a = 10.26)
+    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
 
     # do we need pseudopotential?
     use_pseudopotential = True
@@ -658,6 +659,8 @@ def main():
 
     # density (real space)
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
     # charges
     valence_charges = cell.atom_charges()
@@ -680,9 +683,16 @@ def main():
     # break spin symmetry?
     guess_mix = True
 
-    # damp coulomb potential (helps with convergence sometimes)
-    damp_coulomb_potential = True
+    # damp densities (helps with convergence sometimes)
+    damp_densities = True
 
+    # diis 
+    diis_dimension = 8
+    diis_start_cycle = 2
+    diis_update = DIIS(diis_dimension, start_iter = diis_start_cycle)
+    old_solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
+
+    print("")
     print('    no. k-points:           %20i' % ( len(k) ) )
     print('    KE cutoff (eV)          %20.2f' % ( ke_cutoff * 27.21138602 ) )
     print('    no. basis functions:    %20i' % ( len(basis.g) ) )
@@ -690,20 +700,21 @@ def main():
     print('    no. alpha bands:        %20i' % ( nalpha ) )
     print('    no. beta bands:         %20i' % ( nbeta ) )
     print('    break spin symmetry:    %20s' % ( "yes" if guess_mix is True else "no" ) )
-    print('    damp coulomb potential: %20s' % ( "yes" if damp_coulomb_potential is True else "no" ) )
+    print('    damp densities:         %20s' % ( "yes" if damp_densities is True else "no" ) )
+    print('    diis start iteration:   %20i' % ( diis_start_cycle ) )
+    print('    no. diis vectors:       %20i' % ( diis_dimension ) )
 
     print("")
     print("    ==> Begin SCF <==")
     print("")
 
-    print("    %5s %20s %20s %20s" % ('iter', 'energy', '|dE|', '|drho|'))
+    print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '|drho|', 'Nelec'))
 
     old_total_energy = 0.0
 
     # begin SCF iterations
     for i in range(0,maxiter):
 
-        new_rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
         new_rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
         new_rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
@@ -863,11 +874,44 @@ def main():
 
             #print(epsilon_alpha[nalpha-1], epsilon_beta[nbeta-1])
 
-        # LSDA potential
+        # LSDA XC energy
         cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
+        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
+        xc_energy += cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
 
-        vr_alpha = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( new_rho_alpha , 1.0 / 3.0 )
-        vr_beta  = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( new_rho_beta , 1.0 / 3.0 )
+        # damp density
+        factor = 1.0
+        if damp_densities is True:
+           factor = 0.5
+        new_rho_alpha = factor * new_rho_alpha + (1.0 - factor) * rho_alpha
+        new_rho_beta = factor * new_rho_beta + (1.0 - factor) * rho_beta
+
+        # diis extrapolation
+        rho_dim = basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]
+        solution_vector = np.hstack( (new_rho_alpha.flatten(), new_rho_beta.flatten()) )
+        error_vector = old_solution_vector - solution_vector
+        new_solution_vector = diis_update.compute_new_vec(solution_vector, error_vector)
+        new_rho_alpha = new_solution_vector[:rho_dim].reshape(rho_alpha.shape)
+        new_rho_beta = new_solution_vector[rho_dim:].reshape(rho_beta.shape)
+        old_solution_vector = np.copy(new_solution_vector)
+
+        # convergence in density
+        rho_diff_norm = np.linalg.norm(error_vector) 
+
+        rho = new_rho_alpha + new_rho_beta
+        rho_alpha = new_rho_alpha
+        rho_beta = new_rho_beta
+
+        # coulomb potential
+        tmp = np.fft.ifftn(rho)
+        for myg in range( len(basis.g) ):
+            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
+
+        # LSDA potential
+        vr_alpha = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho_alpha , 1.0 / 3.0 )
+        vr_beta  = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho_beta , 1.0 / 3.0 )
 
         tmp = np.fft.ifftn(vr_alpha)
         for myg in range( len(basis.g) ):
@@ -877,27 +921,6 @@ def main():
         for myg in range( len(basis.g) ):
             v_dft_beta[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        # LSDA XC energy
-        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
-        xc_energy += cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
-
-        #print('    madelung correction:      %20.12lf' % ( - nbands * madelung ) )
-        #print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
-        #print('    electronic energy:        %20.12lf' % ( np.real(electronic_energy) ) )
-        #print('    xc energy:                %20.12lf' % ( xc_energy ) )
-        #print('    total energy:             %20.12lf' % ( new_total_energy ) )
- 
-        # coulomb potential 
-        factor = 1.0
-        if damp_coulomb_potential is True:
-           factor = 0.5
-        new_rho = factor * ( new_rho_alpha + new_rho_beta ) + (1.0 - factor) * rho
-
-        tmp = np.fft.ifftn(new_rho)
-        for myg in range( len(basis.g) ):
-            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
 
         # total energy
         new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc
@@ -908,20 +931,10 @@ def main():
         # update energy
         old_total_energy = new_total_energy
 
-        # convergence in density
-        rho_diff = new_rho - rho
-        rho_diff_norm = np.linalg.norm(rho_diff)
-
         # charge
         charge = ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
 
-        print("    %5i %20.12lf %20.12lf %20.12lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm ) )
-        #print("xc energy = %20.12lf" % ( xc_energy ) )
-        #print("one-electron energy = %20.12lf" % ( np.real(one_electron_energy) ) )
-        #print("coulomb energy = %20.12lf" % ( np.real(coulomb_energy) ) )
-        #print("charge = %20.12lf" % ( charge ) ) 
-
-        rho = new_rho
+        print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm, charge ) )
 
         if ( rho_diff_norm < 1e-4 and energy_diff < 1e-5 ) :
             break
