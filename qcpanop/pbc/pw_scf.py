@@ -379,7 +379,7 @@ def get_plane_wave_basis(ke_cutoff, a, b):
     
     get plane wave basis functions and indices
 
-    :param ke_cuttoff: kinetic energy cutoff (in atomic units)
+    :param ke_cutoff: kinetic energy cutoff (in atomic units)
     :param a: lattice vectors
     :param b: reciprocal lattice vectors
 
@@ -446,13 +446,13 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, ke_cutoff, n_kpts, cell, use_pseudopotential):
+    def __init__(self, ke_cutoff, n_kpts, cell, use_pseudopotential = False):
 
         """
 
         plane wave basis information
 
-        :param ke_cuttoff: kinetic energy cutoff (in atomic units)
+        :param ke_cutoff: kinetic energy cutoff (in atomic units)
         :param n_kpts: number of k-points
         :param cell: the unit cell
         :param use_pseudopotential: use a pseudopotential for all atoms?
@@ -611,14 +611,14 @@ def get_density(basis, C, N, kid):
 
     return ( 1.0 / len(basis.kpts) ) * rho
 
-def form_fock_matrix(basis, kid, v_dft, v_coulomb, v_ne):
+def form_fock_matrix(basis, kid, v_xc, v_coulomb, v_ne):
     """
 
     form fock matrix
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
-    :param v_dft: dft potential
+    :param v_xc: dft exchange-correlation potential
     :param v_coulomb: coulomb potential
     :param v_ne: nuclear electron potential
 
@@ -629,7 +629,7 @@ def form_fock_matrix(basis, kid, v_dft, v_coulomb, v_ne):
     fock = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
     
     # get potential (dft)
-    fock += get_potential(basis, kid, v_dft)
+    fock += get_potential(basis, kid, v_xc)
     
     # get potential (coulomb)
     fock += get_potential(basis, kid, v_coulomb)
@@ -733,7 +733,7 @@ def main():
     ke_cutoff = 500.0 / 27.21138602
 
     # desired number of k-points in each direction
-    n_k_points = [1, 1, 1]
+    n_kpts = [1, 1, 1]
 
     # define unit cell 
 
@@ -743,9 +743,6 @@ def main():
 
     #ase_atom = bulk('H', 'diamond', a = 8.88)
     #ase_atom = bulk('Ne', 'diamond', a = 10.26)
-
-    # do we need pseudopotential?
-    use_pseudopotential = True
 
     #a = np.eye(3) * 4.0
     #atom = 'Ne 0 0 2'
@@ -768,7 +765,7 @@ def main():
     cell.build()
 
     # get plane wave basis information
-    basis = plane_wave_basis(ke_cutoff, n_k_points, cell, use_pseudopotential)
+    basis = plane_wave_basis(ke_cutoff, n_kpts, cell, use_pseudopotential = True)
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
@@ -777,30 +774,21 @@ def main():
     #kmf = pbc.scf.KUHF(cell, kpts = k).run()
     #exit()
 
-    # get madelung constant
-    madelung = tools.pbc.madelung(cell, basis.kpts)
-
-    # get ewald correction
-    ewald = cell.ewald()
-
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
 
-    # potential in reciprocal space
+    # coulomb and xc potentials in reciprocal space
     v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
-    v_dft_alpha = np.zeros(len(basis.g), dtype = 'complex128')
-    v_dft_beta = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
 
     # maximum number of iterations
     maxiter = 100
 
-    tiny = 1e-8
-
+    # density in reciprocal space
     rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
-    scf_iter = 0
-
-    # density (real space)
+    # density in real space
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
@@ -808,7 +796,7 @@ def main():
     # charges
     valence_charges = cell.atom_charges()
     
-    if use_pseudopotential: 
+    if basis.use_pseudopotential: 
         for i in range (0,len(valence_charges)):
             valence_charges[i] = int(basis.gth_params.Zion[i])
 
@@ -855,8 +843,10 @@ def main():
 
     old_total_energy = 0.0
 
+    scf_iter = 0
+
     # begin SCF iterations
-    for i in range(0,maxiter):
+    for i in range(0, maxiter):
 
         new_rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
         new_rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
@@ -867,10 +857,8 @@ def main():
         # loop over k-points
         for j in range( len(basis.kpts) ):
 
-            # alpha
-
             # form fock matrix
-            fock = form_fock_matrix(basis, j, v_dft_alpha, v_coulomb, v_ne)
+            fock = form_fock_matrix(basis, j, v_xc_alpha, v_coulomb, v_ne)
 
             # diagonalize fock matrix
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nalpha))
@@ -893,7 +881,7 @@ def main():
             # now beta
 
             # form fock matrix
-            fock = form_fock_matrix(basis, j, v_dft_beta, v_coulomb, v_ne)
+            fock = form_fock_matrix(basis, j, v_xc_beta, v_coulomb, v_ne)
 
             # diagonalize fock matrix
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
@@ -948,12 +936,11 @@ def main():
 
         tmp = np.fft.ifftn(vr_alpha)
         for myg in range( len(basis.g) ):
-            v_dft_alpha[myg] = tmp[ get_miller_indices(myg, basis) ]
+            v_xc_alpha[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         tmp = np.fft.ifftn(vr_beta)
         for myg in range( len(basis.g) ):
-            v_dft_beta[myg] = tmp[ get_miller_indices(myg, basis) ]
-
+            v_xc_beta[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         # total energy
         new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc
@@ -985,7 +972,6 @@ def main():
 
     print('    ==> energy components <==')
     print('')
-    #print('    ewald correction:         %20.12lf' % ( ewald ) )
     print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
     print('    one-electron energy:      %20.12lf' % ( np.real(one_electron_energy) ) )
     print('    coulomb energy:           %20.12lf' % ( np.real(coulomb_energy) ) )
@@ -993,8 +979,6 @@ def main():
     print('')
     print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc ) )
     print('')
-
-    #assert np.isclose( -1.534165431994, np.real(electronic_energy) + xc_energy + cell.energy_nuc() - nbands * madelung )
 
 if __name__ == "__main__":
     main()
