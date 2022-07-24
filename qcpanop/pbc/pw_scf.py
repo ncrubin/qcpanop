@@ -241,14 +241,13 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
     return vsg / omega
 
 
-def get_gth_pseudopotential(basis, k, kid):
+def get_gth_pseudopotential(basis, kid):
 
     """
 
     get the GTH pseudopotential matrix
 
     :param basis: plane wave basis information
-    :param k: the list of k-points
     :param kid: index for a given k-point
     :return gth_pseudopotential: the GTH pseudopotential matrix
 
@@ -259,7 +258,7 @@ def get_gth_pseudopotential(basis, k, kid):
     gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
     gk = basis.g[gkind]
 
-    sphg, pg = get_spherical_harmonics_and_projectors_gth(k[kid]+gk, basis.gth_params)
+    sphg, pg = get_spherical_harmonics_and_projectors_gth(basis.kpts[kid] + gk, basis.gth_params)
 
     for aa in range(basis.n_plane_waves_per_k[kid]):
 
@@ -447,14 +446,14 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, ke_cutoff, k, cell, use_pseudopotential):
+    def __init__(self, ke_cutoff, n_kpts, cell, use_pseudopotential):
 
         """
 
         plane wave basis information
 
         :param ke_cuttoff: kinetic energy cutoff (in atomic units)
-        :param k: k-points
+        :param n_kpts: number of k-points
         :param cell: the unit cell
         :param use_pseudopotential: use a pseudopotential for all atoms?
 
@@ -472,13 +471,18 @@ class plane_wave_basis():
         use_pseudopotential: use a pseudopotential for all atoms?
         gth_params: GTH pseudopotential parameters
         omega: the unit cell volume
+        kpts: the k-points
 
         """
 
         a = cell.a
         h = cell.reciprocal_vectors()
+
+        # get k-points
+        self.kpts = cell.make_kpts(n_kpts, wrap_around = True)
+
         g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g = get_plane_wave_basis(ke_cutoff, a, h)
-        n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(ke_cutoff, k, g)
+        n_plane_waves_per_k, kg_to_g = get_plane_waves_per_k(ke_cutoff, self.kpts, g)
         SI = get_SI(cell,g)
 
         self.g = g
@@ -577,7 +581,7 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
-def get_density(basis, C, N, k, kid):
+def get_density(basis, C, N, kid):
     """
 
     get real-space density from molecular orbital coefficients
@@ -585,7 +589,6 @@ def get_density(basis, C, N, k, kid):
     :param basis: plane wave basis information
     :param C: molecular orbital coefficients
     :param N: the number of electrons
-    :param k: the list of k-points
     :param kid: index for a given k-point
 
     :return rho: the density
@@ -606,7 +609,7 @@ def get_density(basis, C, N, k, kid):
 
         rho += np.absolute(occ)**2.0
 
-    return ( 1.0 / len(k) ) * rho
+    return ( 1.0 / len(basis.kpts) ) * rho
 
 def main():
 
@@ -656,27 +659,24 @@ def main():
     # build unit cell
     cell.build()
 
-    # get k-points
-    k = cell.make_kpts(n_k_points, wrap_around = True)
+    # get plane wave basis information
+    basis = plane_wave_basis(ke_cutoff, n_k_points, cell, use_pseudopotential)
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
     #kmf = pbc.scf.KUHF(cell, kpts = k).run()
-    #kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = k).run()
+    #kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = basis.kpts).run()
     #kmf = pbc.scf.KUHF(cell, kpts = k).run()
     #exit()
 
     # get madelung constant
-    madelung = tools.pbc.madelung(cell, k)
+    madelung = tools.pbc.madelung(cell, basis.kpts)
 
     # get ewald correction
     ewald = cell.ewald()
 
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
-
-    # get plane wave basis information
-    basis = plane_wave_basis(ke_cutoff, k, cell, use_pseudopotential)
 
     # potential in reciprocal space
     v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
@@ -728,7 +728,7 @@ def main():
     old_solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
 
     print("")
-    print('    no. k-points:           %20i' % ( len(k) ) )
+    print('    no. k-points:           %20i' % ( len(basis.kpts) ) )
     print('    KE cutoff (eV)          %20.2f' % ( ke_cutoff * 27.21138602 ) )
     print('    no. basis functions:    %20i' % ( len(basis.g) ) )
     print('    total_charge:           %20i' % ( total_charge ) )
@@ -757,7 +757,7 @@ def main():
         coulomb_energy = 0.0
 
         # loop over k-points
-        for j in range( len(k) ):
+        for j in range( len(basis.kpts) ):
 
             # alpha
 
@@ -772,13 +772,13 @@ def main():
 
             if use_pseudopotential: 
                 # get pseudopotential
-                fock += get_gth_pseudopotential(basis, k, j)
+                fock += get_gth_pseudopotential(basis, j)
             else:
                 # get potential (nuclear-electronic)
                 fock += get_potential(basis, j, vne)
 
             # get kinetic energy
-            kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
+            kgtmp = basis.kpts[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
             np.fill_diagonal(fock, diagonals)
 
@@ -796,7 +796,7 @@ def main():
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
             if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, k, j)
+                oei = get_gth_pseudopotential(basis, j)
             else:
                 oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
@@ -808,7 +808,7 @@ def main():
 
             diagonal_oei = np.einsum('pi,pq,qj->ij',Calpha.conj(),oei,Calpha)
             for pp in range(nalpha):
-                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(k)
+                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(basis.kpts)
 
             # coulomb part of the energy 
 
@@ -822,10 +822,10 @@ def main():
 
             diagonal_oei = np.einsum('pi,pq,qj->ij',Calpha.conj(),oei,Calpha)
             for pp in range(nalpha):
-                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
+                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
 
             # accumulate density 
-            new_rho_alpha += get_density(basis, Calpha, nalpha, k, j)
+            new_rho_alpha += get_density(basis, Calpha, nalpha, j)
 
             # now beta
 
@@ -840,13 +840,13 @@ def main():
 
             if use_pseudopotential: 
                 # get pseudopotential
-                fock += get_gth_pseudopotential(basis, k, j)
+                fock += get_gth_pseudopotential(basis, j)
             else:
                 # get potential (nuclear-electronic)
                 fock += get_potential(basis, j, vne)
 
             # get kinetic energy
-            kgtmp = k[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
+            kgtmp = basis.kpts[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
             np.fill_diagonal(fock, diagonals)
 
@@ -858,7 +858,7 @@ def main():
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
             if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, k, j)
+                oei = get_gth_pseudopotential(basis, j)
             else:
                 oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
@@ -870,7 +870,7 @@ def main():
 
             diagonal_oei = np.einsum('pi,pq,qj->ij',Cbeta.conj(),oei,Cbeta)
             for pp in range(nbeta):
-                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(k)
+                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(basis.kpts)
 
             # coulomb part of the energy 
 
@@ -884,10 +884,10 @@ def main():
 
             diagonal_oei = np.einsum('pi,pq,qj->ij',Cbeta.conj(),oei,Cbeta)
             for pp in range(nbeta):
-                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
+                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
 
             # accumulate density 
-            new_rho_beta += get_density(basis, Cbeta, nbeta, k, j)
+            new_rho_beta += get_density(basis, Cbeta, nbeta, j)
 
         # LSDA XC energy
         cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
