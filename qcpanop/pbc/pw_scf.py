@@ -241,7 +241,7 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
     return vsg / omega
 
 
-def get_gth_pseudopotential(basis, k, kid, omega):
+def get_gth_pseudopotential(basis, k, kid):
 
     """
 
@@ -250,7 +250,6 @@ def get_gth_pseudopotential(basis, k, kid, omega):
     :param basis: plane wave basis information
     :param k: the list of k-points
     :param kid: index for a given k-point
-    :param omega: the cell volume
     :return gth_pseudopotential: the GTH pseudopotential matrix
 
     """
@@ -269,9 +268,9 @@ def get_gth_pseudopotential(basis, k, kid, omega):
         #inds = basis.miller_to_g[gdiff.T.tolist()]
         inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
-        vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], omega, basis.gth_params)
+        vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], basis.omega, basis.gth_params)
 
-        vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, omega)[aa:]
+        vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
 
         gth_pseudopotential[aa, aa:] = vsg_local 
         gth_pseudopotential[aa, aa:] += vsg_nonlocal 
@@ -326,7 +325,7 @@ def get_SI(cell, Gv=None):
     SI = np.exp(-1j*np.dot(coords, Gv.T))
     return SI
 
-def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None):
+def get_nuclear_electronic_potential(cell, basis, valence_charges = None):
 
     """
     v(r) = \sum_{G}v(G)exp(iG.r)
@@ -352,7 +351,7 @@ def get_nuclear_electronic_potential(cell, basis, omega, valence_charges = None)
 
     coulG = np.divide(4.0 * np.pi, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-    vneG = - rhoG * coulG / omega
+    vneG = - rhoG * coulG / basis.omega
 
     return vneG
 
@@ -472,6 +471,7 @@ class plane_wave_basis():
         SI: structure factor
         use_pseudopotential: use a pseudopotential for all atoms?
         gth_params: GTH pseudopotential parameters
+        omega: the unit cell volume
 
         """
 
@@ -495,7 +495,8 @@ class plane_wave_basis():
         self.gth_params = None
         if ( self.use_pseudopotential ):
             self.gth_params = gth_pseudopotential_parameters(cell)
-        
+
+        self.omega = np.linalg.det(cell.a)
 
 
 def get_plane_waves_per_k(ke_cutoff, k, g):
@@ -576,7 +577,7 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
-def get_density(basis, C, N, k, kid, omega):
+def get_density(basis, C, N, k, kid):
     """
 
     get real-space density from molecular orbital coefficients
@@ -586,7 +587,6 @@ def get_density(basis, C, N, k, kid, omega):
     :param N: the number of electrons
     :param k: the list of k-points
     :param kid: index for a given k-point
-    :param omega: unit cell volume
 
     :return rho: the density
 
@@ -602,7 +602,7 @@ def get_density(basis, C, N, k, kid, omega):
             ik = basis.kg_to_g[kid][tt]
             occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
 
-        occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
+        occ = ( 1.0 / np.sqrt(basis.omega) ) * np.fft.fftn(occ)
 
         rho += np.absolute(occ)**2.0
 
@@ -656,9 +656,6 @@ def main():
     # build unit cell
     cell.build()
 
-    # cell volume
-    omega = np.linalg.det(cell.a)
-
     # get k-points
     k = cell.make_kpts(n_k_points, wrap_around = True)
 
@@ -708,7 +705,7 @@ def main():
             valence_charges[i] = int(basis.gth_params.Zion[i])
 
     # electron-nucleus potential
-    vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
+    vne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
 
     # number of alpha and beta bands
     total_charge = 0
@@ -775,7 +772,7 @@ def main():
 
             if use_pseudopotential: 
                 # get pseudopotential
-                fock += get_gth_pseudopotential(basis, k, j, omega)
+                fock += get_gth_pseudopotential(basis, k, j)
             else:
                 # get potential (nuclear-electronic)
                 fock += get_potential(basis, j, vne)
@@ -799,7 +796,7 @@ def main():
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
             if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, k, j, omega)
+                oei = get_gth_pseudopotential(basis, k, j)
             else:
                 oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
@@ -828,7 +825,7 @@ def main():
                 coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
 
             # accumulate density 
-            new_rho_alpha += get_density(basis, Calpha, nalpha, k, j, omega)
+            new_rho_alpha += get_density(basis, Calpha, nalpha, k, j)
 
             # now beta
 
@@ -843,7 +840,7 @@ def main():
 
             if use_pseudopotential: 
                 # get pseudopotential
-                fock += get_gth_pseudopotential(basis, k, j, omega)
+                fock += get_gth_pseudopotential(basis, k, j)
             else:
                 # get potential (nuclear-electronic)
                 fock += get_potential(basis, j, vne)
@@ -861,7 +858,7 @@ def main():
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
             if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, k, j, omega)
+                oei = get_gth_pseudopotential(basis, k, j)
             else:
                 oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
@@ -890,12 +887,12 @@ def main():
                 coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
 
             # accumulate density 
-            new_rho_beta += get_density(basis, Cbeta, nbeta, k, j, omega)
+            new_rho_beta += get_density(basis, Cbeta, nbeta, k, j)
 
         # LSDA XC energy
         cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
-        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
-        xc_energy += cx * 2.0 ** ( 1.0 / 3.0 ) * ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
+        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
+        xc_energy += cx * 2.0 ** ( 1.0 / 3.0 ) * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
 
         # damp density
         factor = 1.0
@@ -950,7 +947,7 @@ def main():
         old_total_energy = new_total_energy
 
         # charge
-        charge = ( omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
+        charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
 
         print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm, charge ) )
 
