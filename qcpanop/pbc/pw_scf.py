@@ -611,6 +611,114 @@ def get_density(basis, C, N, kid):
 
     return ( 1.0 / len(basis.kpts) ) * rho
 
+def form_fock_matrix(basis, kid, v_dft, v_coulomb, v_ne):
+    """
+
+    form fock matrix
+
+    :param basis: plane wave basis information
+    :param kid: index for a given k-point
+    :param v_dft: dft potential
+    :param v_coulomb: coulomb potential
+    :param v_ne: nuclear electron potential
+
+    :return fock: the fock matrix
+
+    """
+
+    fock = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
+    
+    # get potential (dft)
+    fock += get_potential(basis, kid, v_dft)
+    
+    # get potential (coulomb)
+    fock += get_potential(basis, kid, v_coulomb)
+    
+    if basis.use_pseudopotential:
+        # get pseudopotential
+        fock += get_gth_pseudopotential(basis, kid)
+    else:
+        # get potential (nuclear-electronic)
+        fock += get_potential(basis, kid, v_ne)
+    
+    # get kinetic energy
+    kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
+    diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
+    np.fill_diagonal(fock, diagonals)
+
+    return fock
+
+def get_one_electron_energy(basis, C, N, kid, v_ne):
+    """
+
+    get one-electron part of the energy
+
+    :param basis: plane wave basis information
+    :param C: molecular orbital coefficients
+    :param N: the number of electrons
+    :param kid: index for a given k-point
+    :param v_ne: nuclear electron potential
+
+    :return one_electron_energy: the one-electron energy
+
+    """
+
+    # oei = T + V 
+    oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
+    if basis.use_pseudopotential:
+        oei = get_gth_pseudopotential(basis, kid)
+    else:
+        oei = get_potential(basis, kid, v_ne)
+
+    kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
+
+    diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
+    np.fill_diagonal(oei, diagonals)
+
+    oei = oei + oei.conj().T
+    for pp in range(basis.n_plane_waves_per_k[kid]):
+        oei[pp][pp] *= 0.5
+
+    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
+
+    one_electron_energy = 0.0
+    for pp in range(N):
+        one_electron_energy += ( diagonal_oei[pp][pp] ) / len(basis.kpts)
+
+    return one_electron_energy
+
+def get_coulomb_energy(basis, C, N, kid, v_coulomb):
+    """
+
+    get the coulomb contribution to the energy
+
+    :param basis: plane wave basis information
+    :param C: molecular orbital coefficients
+    :param N: the number of electrons
+    :param kid: index for a given k-point
+    :param v_coulomb: the coulomb potential
+
+    :return coulomb_energy: the coulomb contribution to the energy
+
+    """
+
+    # oei = 1/2 J
+    oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
+    oei = get_potential(basis, kid, v_coulomb)
+
+    oei = oei + oei.conj().T
+    for pp in range(basis.n_plane_waves_per_k[kid]):
+        oei[pp][pp] *= 0.5
+
+    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
+
+    coulomb_energy = 0.0
+    for pp in range(N):
+        coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
+
+    return coulomb_energy
+
+
 def main():
 
     print('')
@@ -705,7 +813,7 @@ def main():
             valence_charges[i] = int(basis.gth_params.Zion[i])
 
     # electron-nucleus potential
-    vne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
+    v_ne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
 
     # number of alpha and beta bands
     total_charge = 0
@@ -762,25 +870,7 @@ def main():
             # alpha
 
             # form fock matrix
-            fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-
-            # get potential (dft)
-            fock += get_potential(basis, j, v_dft_alpha)
-
-            # get potential (coulomb)
-            fock += get_potential(basis, j, v_coulomb)
-
-            if use_pseudopotential: 
-                # get pseudopotential
-                fock += get_gth_pseudopotential(basis, j)
-            else:
-                # get potential (nuclear-electronic)
-                fock += get_potential(basis, j, vne)
-
-            # get kinetic energy
-            kgtmp = basis.kpts[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
-            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
-            np.fill_diagonal(fock, diagonals)
+            fock = form_fock_matrix(basis, j, v_dft_alpha, v_coulomb, v_ne)
 
             # diagonalize fock matrix
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nalpha))
@@ -792,37 +882,10 @@ def main():
                 Calpha[:, nalpha] = tmp
 
             # one-electron part of the energy 
+            one_electron_energy += get_one_electron_energy(basis, Calpha, nalpha, j, v_ne)
 
-            # oei = T + V 
-            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, j)
-            else:
-                oei = get_potential(basis, j, vne)
-            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
-            np.fill_diagonal(oei, diagonals)
-
-            oei = oei + oei.conj().T
-            for pp in range(basis.n_plane_waves_per_k[j]):
-                oei[pp][pp] *= 0.5
-
-            diagonal_oei = np.einsum('pi,pq,qj->ij',Calpha.conj(),oei,Calpha)
-            for pp in range(nalpha):
-                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(basis.kpts)
-
-            # coulomb part of the energy 
-
-            # oei = 1/2 J
-            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            oei = get_potential(basis, j, v_coulomb)
-
-            oei = oei + oei.conj().T
-            for pp in range(basis.n_plane_waves_per_k[j]):
-                oei[pp][pp] *= 0.5
-
-            diagonal_oei = np.einsum('pi,pq,qj->ij',Calpha.conj(),oei,Calpha)
-            for pp in range(nalpha):
-                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
+            # coulomb part of the energy: 1/2 J
+            coulomb_energy += get_coulomb_energy(basis, Calpha, nalpha, j, v_coulomb)
 
             # accumulate density 
             new_rho_alpha += get_density(basis, Calpha, nalpha, j)
@@ -830,61 +893,16 @@ def main():
             # now beta
 
             # form fock matrix
-            fock = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-
-            # get potential (dft)
-            fock += get_potential(basis, j, v_dft_beta)
-
-            # get potential (coulomb)
-            fock += get_potential(basis, j, v_coulomb)
-
-            if use_pseudopotential: 
-                # get pseudopotential
-                fock += get_gth_pseudopotential(basis, j)
-            else:
-                # get potential (nuclear-electronic)
-                fock += get_potential(basis, j, vne)
-
-            # get kinetic energy
-            kgtmp = basis.kpts[j] + basis.g[basis.kg_to_g[j, :basis.n_plane_waves_per_k[j]]]
-            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
-            np.fill_diagonal(fock, diagonals)
+            fock = form_fock_matrix(basis, j, v_dft_beta, v_coulomb, v_ne)
 
             # diagonalize fock matrix
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
 
             # one-electron part of the energy 
+            one_electron_energy += get_one_electron_energy(basis, Cbeta, nbeta, j, v_ne)
 
-            # oei = T + V 
-            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, j)
-            else:
-                oei = get_potential(basis, j, vne)
-            diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
-            np.fill_diagonal(oei, diagonals)
-
-            oei = oei + oei.conj().T
-            for pp in range(basis.n_plane_waves_per_k[j]):
-                oei[pp][pp] *= 0.5
-
-            diagonal_oei = np.einsum('pi,pq,qj->ij',Cbeta.conj(),oei,Cbeta)
-            for pp in range(nbeta):
-                one_electron_energy += ( diagonal_oei[pp][pp] ) / len(basis.kpts)
-
-            # coulomb part of the energy 
-
-            # oei = 1/2 J
-            oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
-            oei = get_potential(basis, j, v_coulomb)
-
-            oei = oei + oei.conj().T
-            for pp in range(basis.n_plane_waves_per_k[j]):
-                oei[pp][pp] *= 0.5
-
-            diagonal_oei = np.einsum('pi,pq,qj->ij',Cbeta.conj(),oei,Cbeta)
-            for pp in range(nbeta):
-                coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
+            # coulomb part of the energy: 1/2 J
+            coulomb_energy += get_coulomb_energy(basis, Cbeta, nbeta, j, v_coulomb)
 
             # accumulate density 
             new_rho_beta += get_density(basis, Cbeta, nbeta, j)
