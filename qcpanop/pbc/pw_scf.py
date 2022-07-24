@@ -241,14 +241,13 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
     return vsg / omega
 
 
-def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
+def get_gth_pseudopotential(basis, k, kid, omega):
 
     """
 
     get the GTH pseudopotential matrix
 
     :param basis: plane wave basis information
-    :param gth_params: GTH pseudopotential parameters
     :param k: the list of k-points
     :param kid: index for a given k-point
     :param omega: the cell volume
@@ -261,7 +260,7 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
     gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
     gk = basis.g[gkind]
 
-    sphg, pg = get_spherical_harmonics_and_projectors_gth(k[kid]+gk,gth_params)
+    sphg, pg = get_spherical_harmonics_and_projectors_gth(k[kid]+gk, basis.gth_params)
 
     for aa in range(basis.n_plane_waves_per_k[kid]):
 
@@ -270,9 +269,9 @@ def get_gth_pseudopotential(basis, gth_params, k, kid, omega):
         #inds = basis.miller_to_g[gdiff.T.tolist()]
         inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
-        vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], omega, gth_params)
+        vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], omega, basis.gth_params)
 
-        vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, gth_params, omega)[aa:]
+        vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, omega)[aa:]
 
         gth_pseudopotential[aa, aa:] = vsg_local 
         gth_pseudopotential[aa, aa:] += vsg_nonlocal 
@@ -449,7 +448,7 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, ke_cutoff, k, cell):
+    def __init__(self, ke_cutoff, k, cell, use_pseudopotential):
 
         """
 
@@ -458,6 +457,7 @@ class plane_wave_basis():
         :param ke_cuttoff: kinetic energy cutoff (in atomic units)
         :param k: k-points
         :param cell: the unit cell
+        :param use_pseudopotential: use a pseudopotential for all atoms?
 
         members:
 
@@ -470,6 +470,8 @@ class plane_wave_basis():
         n_plane_waves_per_k: number of plane wave basis functions per k-point
         kg_to_g: a map between basis functions for a given k-point and the original set of plane wave basis functions
         SI: structure factor
+        use_pseudopotential: use a pseudopotential for all atoms?
+        gth_params: GTH pseudopotential parameters
 
         """
 
@@ -488,6 +490,13 @@ class plane_wave_basis():
         self.n_plane_waves_per_k = n_plane_waves_per_k
         self.kg_to_g = kg_to_g
         self.SI = SI
+
+        self.use_pseudopotential = use_pseudopotential
+        self.gth_params = None
+        if ( self.use_pseudopotential ):
+            self.gth_params = gth_pseudopotential_parameters(cell)
+        
+
 
 def get_plane_waves_per_k(ke_cutoff, k, g):
 
@@ -670,11 +679,7 @@ def main():
     enuc = cell.energy_nuc()
 
     # get plane wave basis information
-    basis = plane_wave_basis(ke_cutoff, k, cell)
-
-    # pseudopotential parameters 
-    if use_pseudopotential: 
-        gth_params = gth_pseudopotential_parameters(cell)
+    basis = plane_wave_basis(ke_cutoff, k, cell, use_pseudopotential)
 
     # potential in reciprocal space
     v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
@@ -700,7 +705,7 @@ def main():
     
     if use_pseudopotential: 
         for i in range (0,len(valence_charges)):
-            valence_charges[i] = int(gth_params.Zion[i])
+            valence_charges[i] = int(basis.gth_params.Zion[i])
 
     # electron-nucleus potential
     vne = get_nuclear_electronic_potential(cell, basis, omega, valence_charges = valence_charges)
@@ -770,7 +775,7 @@ def main():
 
             if use_pseudopotential: 
                 # get pseudopotential
-                fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
+                fock += get_gth_pseudopotential(basis, k, j, omega)
             else:
                 # get potential (nuclear-electronic)
                 fock += get_potential(basis, j, vne)
@@ -794,7 +799,7 @@ def main():
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
             if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, gth_params, k, j, omega)
+                oei = get_gth_pseudopotential(basis, k, j, omega)
             else:
                 oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
@@ -838,7 +843,7 @@ def main():
 
             if use_pseudopotential: 
                 # get pseudopotential
-                fock += get_gth_pseudopotential(basis, gth_params, k, j, omega)
+                fock += get_gth_pseudopotential(basis, k, j, omega)
             else:
                 # get potential (nuclear-electronic)
                 fock += get_potential(basis, j, vne)
@@ -856,7 +861,7 @@ def main():
             # oei = T + V 
             oei = np.zeros((basis.n_plane_waves_per_k[j], basis.n_plane_waves_per_k[j]), dtype = 'complex128')
             if use_pseudopotential: 
-                oei = get_gth_pseudopotential(basis, gth_params, k, j, omega)
+                oei = get_gth_pseudopotential(basis, k, j, omega)
             else:
                 oei = get_potential(basis, j, vne)
             diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + oei.diagonal()
