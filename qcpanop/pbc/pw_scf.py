@@ -567,6 +567,38 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
+def get_density(basis, C, N, k, kid, omega):
+    """
+
+    get real-space density from molecular orbital coefficients
+
+    :param basis: plane wave basis information
+    :param C: molecular orbital coefficients
+    :param N: the number of electrons
+    :param k: the list of k-points
+    :param kid: index for a given k-point
+    :param omega: unit cell volume
+
+    :return rho: the density
+
+    """
+
+    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    for pp in range(N):
+
+        occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
+
+        for tt in range( basis.n_plane_waves_per_k[kid] ):
+
+            ik = basis.kg_to_g[kid][tt]
+            occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
+
+        occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
+
+        rho += np.absolute(occ)**2.0
+
+    return ( 1.0 / len(k) ) * rho
+
 def main():
 
     print('')
@@ -586,7 +618,8 @@ def main():
     # define unit cell 
 
     # build unit cell
-    ase_atom = bulk('Si', 'diamond', a = 10.26)
+    #ase_atom = bulk('Si', 'diamond', a = 10.26)
+    ase_atom = bulk('C', 'diamond', a = 6.74)
 
     #ase_atom = bulk('H', 'diamond', a = 8.88)
     #ase_atom = bulk('Ne', 'diamond', a = 10.26)
@@ -639,7 +672,7 @@ def main():
     # get plane wave basis information
     basis = plane_wave_basis(ke_cutoff, k, cell)
 
-    # pseudopotential parameters (default Si)
+    # pseudopotential parameters 
     if use_pseudopotential: 
         gth_params = gth_pseudopotential_parameters(cell)
 
@@ -790,16 +823,7 @@ def main():
                 coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
 
             # accumulate density 
-            for pp in range(nalpha):
-
-                occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
-                for tt in range( basis.n_plane_waves_per_k[j] ):
-                    ik = basis.kg_to_g[j][tt]
-                    occ[ get_miller_indices(ik, basis) ] = Calpha[tt, pp]
-
-                occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
-
-                new_rho_alpha += ( 1.0 / len(k) ) * np.absolute(occ)**2.0
+            new_rho_alpha += get_density(basis, Calpha, nalpha, k, j, omega)
 
             # now beta
 
@@ -861,18 +885,7 @@ def main():
                 coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(k)
 
             # accumulate density 
-            for pp in range(nbeta):
-
-                occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
-                for tt in range( basis.n_plane_waves_per_k[j] ):
-                    ik = basis.kg_to_g[j][tt]
-                    occ[ get_miller_indices(ik, basis) ] = Cbeta[tt, pp]
-
-                occ = ( 1.0 / np.sqrt(omega) ) * np.fft.fftn(occ)
-
-                new_rho_beta += ( 1.0 / len(k) ) * np.absolute(occ)**2.0
-
-            #print(epsilon_alpha[nalpha-1], epsilon_beta[nbeta-1])
+            new_rho_beta += get_density(basis, Cbeta, nbeta, k, j, omega)
 
         # LSDA XC energy
         cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
