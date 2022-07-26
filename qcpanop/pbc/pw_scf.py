@@ -3,6 +3,7 @@
 Use PySCF infrastructure to perform SCF with plane wave basis
 
 """
+
 from itertools import product
 import warnings
 import numpy as np
@@ -723,57 +724,24 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     return coulomb_energy
 
 
-def main():
+def pw_uks(cell, basis, xc = 'lda'):
 
+    """
+
+    plane wave unrestricted kohn-sham
+
+    :param cell: the unit cell
+    :param basis: plane wave basis information
+
+    """
+ 
     print('')
     print('    ************************************************')
     print('    *                                              *')
-    print('    *                Plane-wave SCF                *')
+    print('    *                Plane-wave UKS                *')
     print('    *                                              *')
     print('    ************************************************')
     print('')
-
-    # define unit cell 
-
-    # build unit cell
-    #ase_atom = bulk('Si', 'diamond', a = 10.26)
-    ase_atom = bulk('C', 'diamond', a = 6.74)
-
-    #ase_atom = bulk('H', 'diamond', a = 8.88)
-    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
-
-    a = np.eye(3) * 4.0
-    atom = 'B 0 0 0; H 0 0 1'
-
-    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
-    #a = ase_atom.cell
-
-    cell = gto.M(a = a,
-                 atom = atom,
-                 unit = 'bohr',
-                 basis = 'gth-dzv', #'cc-pvtz', #gth-dzv',
-                 pseudo = 'gth-blyp',
-                 verbose = 100,
-                 #ke_cutoff = ke_cutoff,
-                 precision = 1.0e-8,
-                 #spin = 1,
-                 dimension = 3)
-
-    # build unit cell
-    cell.build()
-
-    # get plane wave basis information
-    basis = plane_wave_basis(cell, 
-                             ke_cutoff = 500.0 / 27.21138602, 
-                             n_kpts = [1, 1, 1], 
-                             use_pseudopotential = True)
-
-    # run pyscf dft
-    from pyscf import dft, scf, pbc
-    #kmf = pbc.scf.KUHF(cell, kpts = k).run()
-    #kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = basis.kpts).run()
-    #kmf = pbc.scf.KUHF(cell, kpts = k).run()
-    #exit()
 
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
@@ -837,7 +805,7 @@ def main():
     print('    no. diis vectors:       %20i' % ( diis_dimension ) )
 
     print("")
-    print("    ==> Begin SCF <==")
+    print("    ==> Begin UKS Iterations <==")
     print("")
 
     print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '|drho|', 'Nelec'))
@@ -846,7 +814,7 @@ def main():
 
     scf_iter = 0
 
-    # begin SCF iterations
+    # begin UKS iterations
     for i in range(0, maxiter):
 
         new_rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
@@ -976,11 +944,11 @@ def main():
 
     if scf_iter == maxiter:
         print('')
-        print('    SCF did not converge.')
+        print('    UKS iterations did not converge.')
         print('')
     else:
         print('')
-        print('    SCF converged!')
+        print('    UKS iterations converged!')
         print('')
 
     print('    ==> energy components <==')
@@ -993,5 +961,3 @@ def main():
     print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc ) )
     print('')
 
-if __name__ == "__main__":
-    main()
