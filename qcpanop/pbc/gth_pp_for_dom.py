@@ -3,8 +3,7 @@ import numpy as np
 from pw_scf import plane_wave_basis
 from pw_scf import get_gth_pseudopotential
 
-from pyscf import dft, scf, pbc
-from pyscf.pbc import gto, scf
+from pyscf.pbc import gto
 
 def print_gth_parameters(cell, basis):
 
@@ -13,7 +12,7 @@ def print_gth_parameters(cell, basis):
     print the GTH pseudopotential parameters
 
     :param cell: the unit cell
-    :param basis: planewave basis information
+    :param basis: planewave basis information (contains gth parameters)
 
     """
 
@@ -40,12 +39,7 @@ def print_gth_parameters(cell, basis):
 
     for center in range (0, natom):
 
-        #lmax = params.lmax[center]
-        #imax = params.lmax[center]
-
         print('        atom: %20s' % ( cell._atom[center][0] ) )
-        #print('        lmax: %20i' % ( params.lmax[center] ) )
-        #print('        imax: %20i' % ( params.imax[center] ) )
         print('        rl:   %20.12lf %20.12lf %20.12lf' % ( params.rl[center][0], params.rl[center][1], params.rl[center][2] ) )
         print('        h^l_ij:')
 
