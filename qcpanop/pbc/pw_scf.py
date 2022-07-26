@@ -256,7 +256,7 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
 
     """
 
-    if pp_component is not None and pp_component is not 'local' and pp_component is not 'nonlocal':
+    if pp_component != None and pp_component != 'local' and pp_component != 'nonlocal':
         raise Exception('invalid pseudopoential component')
 
     gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
@@ -758,7 +758,7 @@ def pw_uks(cell, basis, xc = 'lda'):
     print('    ************************************************')
     print('')
 
-    if xc is not 'lda':
+    if xc != 'lda':
         raise Exception("pw_uks only supports xc = 'lda' for now")
 
     # get nuclear repulsion energy
@@ -811,16 +811,17 @@ def pw_uks(cell, basis, xc = 'lda'):
     old_solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
 
     print("")
-    print('    no. k-points:           %20i' % ( len(basis.kpts) ) )
-    print('    KE cutoff (eV)          %20.2f' % ( basis.ke_cutoff * 27.21138602 ) )
-    print('    no. basis functions:    %20i' % ( len(basis.g) ) )
-    print('    total_charge:           %20i' % ( total_charge ) )
-    print('    no. alpha bands:        %20i' % ( nalpha ) )
-    print('    no. beta bands:         %20i' % ( nbeta ) )
-    print('    break spin symmetry:    %20s' % ( "yes" if guess_mix is True else "no" ) )
-    print('    damp densities:         %20s' % ( "yes" if damp_densities is True else "no" ) )
-    print('    diis start iteration:   %20i' % ( diis_start_cycle ) )
-    print('    no. diis vectors:       %20i' % ( diis_dimension ) )
+    print('    no. k-points:                                %20i' % ( len(basis.kpts) ) )
+    print('    KE cutoff (eV)                               %20.2f' % ( basis.ke_cutoff * 27.21138602 ) )
+    print('    no. basis functions (orbitals, gamma point): %20i' % ( basis.n_plane_waves_per_k[0] ) )
+    print('    no. basis functions (density):               %20i' % ( len(basis.g) ) )
+    print('    total_charge:                                %20i' % ( total_charge ) )
+    print('    no. alpha bands:                             %20i' % ( nalpha ) )
+    print('    no. beta bands:                              %20i' % ( nbeta ) )
+    print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
+    print('    damp densities:                              %20s' % ( "yes" if damp_densities is True else "no" ) )
+    print('    diis start iteration:                        %20i' % ( diis_start_cycle ) )
+    print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
 
     print("")
     print("    ==> Begin UKS Iterations <==")
