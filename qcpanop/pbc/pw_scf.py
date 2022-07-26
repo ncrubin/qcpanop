@@ -273,20 +273,21 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
         #inds = basis.miller_to_g[gdiff.T.tolist()]
         inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
 
-        vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], basis.omega, basis.gth_params)
+        if pp_component == 'local' :
 
-        vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
+            gth_pseudopotential[aa, aa:] = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], basis.omega, basis.gth_params)
 
-        factor_local = 1.0
-        factor_nonlocal = 1.0
+        elif pp_component == 'nonlocal' :
 
-        if pp_component == 'local':
-            factor_nonlocal = 0.0
-        if pp_component == 'nonlocal':
-            factor_local = 0.0
-        
-        gth_pseudopotential[aa, aa:] = vsg_local * factor_local
-        gth_pseudopotential[aa, aa:] += vsg_nonlocal * factor_nonlocal
+            gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
+
+        else :
+
+            vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], basis.omega, basis.gth_params)
+            vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
+
+            gth_pseudopotential[aa, aa:] = vsg_local
+            gth_pseudopotential[aa, aa:] += vsg_nonlocal
 
     return gth_pseudopotential
 
