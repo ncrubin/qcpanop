@@ -242,7 +242,7 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
     return vsg / omega
 
 
-def get_gth_pseudopotential(basis, kid):
+def get_gth_pseudopotential(basis, kid, pp_component = None):
 
     """
 
@@ -250,9 +250,14 @@ def get_gth_pseudopotential(basis, kid):
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
+    :param pp_component: flag to request only the local or nonlocal components of the potential
+
     :return gth_pseudopotential: the GTH pseudopotential matrix
 
     """
+
+    if pp_component is not None and pp_component is not 'local' and pp_component is not 'nonlocal':
+        raise Exception('invalid pseudopoential component')
 
     gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
 
@@ -272,8 +277,16 @@ def get_gth_pseudopotential(basis, kid):
 
         vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
 
-        gth_pseudopotential[aa, aa:] = vsg_local 
-        gth_pseudopotential[aa, aa:] += vsg_nonlocal 
+        factor_local = 1.0
+        factor_nonlocal = 1.0
+
+        if pp_component == 'local':
+            factor_nonlocal = 0.0
+        if pp_component == 'nonlocal':
+            factor_local = 0.0
+        
+        gth_pseudopotential[aa, aa:] = vsg_local * factor_local
+        gth_pseudopotential[aa, aa:] += vsg_nonlocal * factor_nonlocal
 
     return gth_pseudopotential
 
