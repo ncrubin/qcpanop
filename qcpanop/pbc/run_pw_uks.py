@@ -6,20 +6,9 @@ from pw_scf import pw_uks
 from pyscf import dft, scf, pbc
 from pyscf.pbc import gto, scf
 
-import ase
-from ase.build import bulk
-
 def main():
 
     # define unit cell 
-    
-    #ase_atom = bulk('Si', 'diamond', a = 10.26)
-    #ase_atom = bulk('C', 'diamond', a = 6.74)
-    #ase_atom = bulk('H', 'diamond', a = 8.88)
-    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
-
-    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
-    #a = ase_atom.cell
     
     a = np.eye(3) * 4.0
     atom = 'B 0 0 0; H 0 0 2'
