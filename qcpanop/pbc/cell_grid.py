@@ -1,6 +1,5 @@
 """
 Use pyscf's cell infrastructure to define computational cell and grids
-
 Implement Hamiltonian and SCF cycle
 """
 from itertools import product
@@ -14,112 +13,14 @@ from pyscf.pbc.gto import estimate_ke_cutoff
 from pyscf.pbc import tools
 
 
-
-from pyscf.pbc import gto as pbcgto
-
-def Get_Local_Pseudopotential_GTH(g2,c1,c2,c3,c4,rloc,Zion):
-
-    """
-
-    Construct and return local contribution to GTH pseudopotential
-
-    :param g2: square modulus of plane wave basis functions
-    :param c1: GTH pseudopotential parameter, c1
-    :param c2: GTH pseudopotential parameter, c2
-    :param c3: GTH pseudopotential parameter, c3
-    :param c4: GTH pseudopotential parameter, c4
-    :param rloc: GTH pseudopotential parameter, rloc
-    :param Zion: ion charge
-    :return: local contribution to GTH pseudopotential
-    """
-
-    vsg=np.zeros(len(g2),dtype='float64')
-    largeind=g2>eps
-    smallind=g2<=eps #|G|^2->0 limit
-    g2=g2[largeind]
-    rloc2=rloc*rloc
-    rloc3=rloc*rloc2
-    rloc4=rloc2*rloc2
-    rloc6=rloc2*rloc4
-    g4=g2*g2
-    g6=g2*g4
-
-    vsgl=np.exp(-g2*rloc2/2.)*(-4.*np.pi*Zion/g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-g2*rloc2)+c3*(15.-10.*g2*rloc2+g4*rloc4)+c4*(105.-105.*g2*rloc2+21.*g4*rloc4-g6*rloc6)))
-    vsgs=2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.ip)*rloc+Zion) #|G|^2->0 limit
-    vsg[largeind]=vsgl
-    vsg[smallind]=vsgs
-
-    return vsg/omega
-
-def Get_Spherical_Harmonics_and_Projectors_GTH(gv,rl,lmax,imax):
-
-    """
-
-    Construct spherical harmonics and projectors for GTH pseudopotential
-
-    :param gv: plane wave basis functions plus kpt
-    :param rl: list of [rs, rp]
-    :param lmax: maximum angular momentum, l
-    :param imax: maximum i for projectors
-    :return: spherical harmonics and projectors for GTH pseudopotential
-    """
-
-    rgv,thetagv,phigv=pbcgto.pseudo.pp.cart2polar(gv)
-
-    mmax = 2*(lmax-1)+1
-    gmax = len(gv)
-
-    spherical_harmonics_lm = np.zeros((lmax,mmax,gmax),dtype='complex128')
-    projector_li           = np.zeros((lmax,imax,gmax),dtype='complex128')
-
-    for l in range(lmax):
-        for m in range(-l,l+1):
-            spherical_harmonics_lm[l,m+l,:] = scipy.special.sph_harm(m,l,phigv,thetagv)
-        for i in range(imax):
-            projector_li[l,i,:] = pbcgto.pseudo.pp.projG_li(rgv,l,i,rl[l])
-
-    return spherical_harmonics_lm, projector_li
-
-def Get_NonLocal_PseudoPotential_GTH(sphg,pg,gind,hgth):
-    """
-
-    Construct and return non-local contribution to GTH pseudopotential
-
-    :param sphg: angular part of plane wave basis
-    :param pg: projectors 
-    :param gind: plane wave basis function label 
-    :param hgth: GTH pseudopotential parameter, hlij
-    :return: non-local contribution to GTH pseudopotential
-    """
-
-    vsg = 0.0
-    for l in [0,1]:
-        vsgij = vsgsp = 0.0
-        for i in [0,1]:
-            for j in [0,1]:
-                #vsgij+=thepow[l]*pg[l,i,gind]*hgth[l,i,j]*pg[l,j,:]
-                vsgij += pg[l,i,gind] * hgth[l,i,j] * pg[l,j,:]
-
-        for m in range(-l,l+1):
-            vsgsp += sphg[l,m+l,gind] * sphg[l,m+l,:].conj()
-
-        vsg += vsgij * vsgsp
-
-    return vsg/omega
-
-
 def get_SI(cell, Gv=None):
     '''Calculate the structure factor (0D, 1D, 2D, 3D) for all atoms;
     see MH (3.34).
-
     S_{I}(G) = exp(iG.R_{I})
-
     Args:
         cell : instance of :class:`Cell`
-
         Gv : (N,3) array
             G vectors
-
     Returns:
         SI : (natm, ngrids) ndarray, dtype=np.complex128
             The structure factor for each atom at each G-vector.
@@ -143,12 +44,9 @@ def get_SI(cell, Gv=None):
 
 def get_Gv(cell, mesh=None, **kwargs):
     '''Calculate three-dimensional G-vectors for the cell; see MH (3.8).
-
     Indices along each direction go as [0...N-1, -N...-1] to follow FFT convention.
-
     Args:
         cell : instance of :class:`Cell`
-
     Returns:
         Gv : (ngrids, 3) ndarray of floats
             The array of G-vectors.
@@ -172,22 +70,17 @@ def get_Gv(cell, mesh=None, **kwargs):
 
 def get_uniform_grids(cell, mesh=None, **kwargs):
     '''Generate a uniform real-space grid consistent w/ samp thm; see MH (3.19).
-
     R = h N q
-
     h is the matrix of lattice vectors (bohr)
     N is diagonal with entry as 1/N_{x, y, z}
     q is a vector of ints [0, N_{x, y, z} - 1]
     N_{x, y, z} chosen s.t. N_{x, y, z} >= 2 * max(g_{x, y, z}) + 1
     where g is the tuple of
-
     Args:
         cell : instance of :class:`Cell`
-
     Returns:
         coords : (ngx*ngy*ngz, 3) ndarray
             The real-space grid point coordinates.
-
     '''
     if mesh is None: mesh = cell.mesh
     if 'gs' in kwargs:
@@ -208,7 +101,6 @@ def get_uniform_grids(cell, mesh=None, **kwargs):
 def ke_matrix(cell, kpoint=np.array([0, 0, 0])):
     """
     construct kinetic-energy matrix at a particular k-point
-
     -0.5 nabla^{2} phi_{r}(g) = -0.5 (iG)^2 (1/sqrt(omega))exp(iG.r)
     =0.5G^2 phi_{r}(g)
     """
@@ -229,7 +121,6 @@ def potential_matrix(cell, kpoint=np.array([0, 0, 0])):
 def get_nuc(mydf, kpts=None):
     """
     v(r) = \sum_{G}v(G)exp(iG.r)
-
     :param mydf:
     :param kpts:
     :return:
@@ -301,7 +192,7 @@ def get_pp(cell):
                 # for k in range(nl):
                 #     qkl = _qli(G_rad*rl, l, k)
 
-    #exit()
+    exit()
 
 
 
@@ -403,75 +294,7 @@ def main():
     get_pp(cell)
 
 
-    # get GTH pseudopotential matrix
 
-    # define GTH parameters:
-
-    # parameters for local contribution to pseudopotential (for Si)
-    c1   = -7.336103
-    c2   =  0.0
-    c3   =  0.0
-    c4   =  0.0
-    rloc =  0.44
-    Zion =  4.0
-
-    # parameters for non-local contribution to pseudopotential (for Si)
-
-    # hlij
-    hgth = np.zeros((2,3,3),dtype='float64')
-    hgth[0,0,0] = 5.906928
-    hgth[0,1,1] = 3.258196
-    hgth[0,0,1] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-    hgth[0,1,0] = -0.5*np.sqrt(3./5.) * hgth[0,1,1]
-    hgth[1,0,0] = 2.727013
-
-    # rs, rp, max l, max i
-    r0   = 0.422738
-    r1   = 0.484278
-    rl   = [r0,r1]
-    lmax = 2
-    imax = 2
-
-    # lattice constant
-    lc = 10.26 
-
-    sg = np.zeros(len(g),dtype='complex128')
-    for i in range(len(g)):
-        sg[i] = 2.0 * np.cos(np.dot(g[i],np.array([lc,lc,lc])/8.0))
-
-    """ 
-    need to define:
-
-    k     = k-points [from GetMP() in gkclab/tickle]
-    npw   = number of plane wave basis functions for each  k-point [from GetK() in gkclab/tickle]
-    indgk = for each k-point, the index of the G vectors in contained in g [from GetK()]
-    g     = the plane waves [from  GetGrids() in gkclab/tickle]
-    g2    = the square modulus of the plane waves [from  GetGrids()]
-    mill  = list of miller indices for G vectors [from GetGrids()]
-    nm    = maximum dimension for reciprocal basis
-
-    """
-
-    for j in range(len(k)):
-    
-        gth_pseudopotential = np.zeros((npw[j],npw[j]),dtype='complex128')
-
-        gkind = indgk[j,:npw[j]]
-        gk    = g[gkind]
-
-        sphg, pg = Get_Spherical_Harmonics_and_Projectors_GTH(k[j]+gk,rl,lmax,imax)
-
-        for aa in range(npw[j]):
-
-            ik    = indgk[j][aa]
-            gdiff = mill[ik]-mill[gkind]+np.array(nm)
-            inds  = indg[gdiff.T.tolist()]
-
-            vsg_local = Get_Local_Pseudopotential_GTH(g2[inds],c1,c2,c3,c4,rloc,Zion)
-
-            vsg_non_local = Get_NonLocal_PseudoPotential_GTH(sphg,pg,aa,hgth)[aa:]
-
-            gth_pseudopotential[aa,aa:] = ( vsg_local + vsg_non_local ) * sg[inds]
 
 if __name__ == "__main__":
     main()
