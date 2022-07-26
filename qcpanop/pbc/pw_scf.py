@@ -864,11 +864,11 @@ def main():
             # break spin symmetry?
             if guess_mix is True and scf_iter == 0:
 
-                c = np.cos(0.5 * np.pi)
-                s = np.sin(0.5 * np.pi)
+                c = np.cos(0.25 * np.pi)
+                s = np.sin(0.25 * np.pi)
 
-                tmp1 =  c * Calpha[:, nalpha-1] + s * Calpha[:, nalpha]
-                tmp2 = -s * Calpha[:, nalpha-1] + c * Calpha[:, nalpha]
+                tmp1 = c * Calpha[:, nalpha-1] - s * Calpha[:, nalpha]
+                tmp2 = s * Calpha[:, nalpha-1] + c * Calpha[:, nalpha]
 
                 Calpha[:, nalpha-1] = tmp1
                 Calpha[:, nalpha] = tmp2
