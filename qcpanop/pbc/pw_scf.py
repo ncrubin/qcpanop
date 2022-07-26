@@ -745,6 +745,7 @@ def pw_uks(cell, basis, xc = 'lda'):
 
     :param cell: the unit cell
     :param basis: plane wave basis information
+    :param xc: the exchange-correlation functional
 
     """
  
@@ -755,6 +756,9 @@ def pw_uks(cell, basis, xc = 'lda'):
     print('    *                                              *')
     print('    ************************************************')
     print('')
+
+    if xc is not 'lda':
+        raise Exception("pw_uks only supports xc = 'lda' for now")
 
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
