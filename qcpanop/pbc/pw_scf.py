@@ -900,9 +900,14 @@ def pw_uks(cell, basis, xc = 'lda'):
         rho_diff_norm = np.linalg.norm(error_vector) 
 
         # update density
-        rho = new_rho_alpha + new_rho_beta
         rho_alpha = new_rho_alpha
         rho_beta = new_rho_beta
+
+        # density should be non-negative ...
+        rho_alpha = rho_alpha.clip(min = 0)
+        rho_beta = rho_beta.clip(min = 0)
+
+        rho = new_rho_alpha + new_rho_beta
 
         # coulomb potential
         tmp = np.fft.ifftn(rho)
