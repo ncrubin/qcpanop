@@ -763,7 +763,10 @@ def main():
     cell.build()
 
     # get plane wave basis information
-    basis = plane_wave_basis(cell, ke_cutoff = 500.0 / 27.21138602, n_kpts = [1, 1, 1], use_pseudopotential = True)
+    basis = plane_wave_basis(cell, 
+                             ke_cutoff = 500.0 / 27.21138602, 
+                             n_kpts = [1, 1, 1], 
+                             use_pseudopotential = True)
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
@@ -855,11 +858,16 @@ def main():
         # loop over k-points
         for kid in range( len(basis.kpts) ):
 
+            # alpha
+
             # form fock matrix
             fock = form_fock_matrix(basis, kid, v_xc_alpha, v_coulomb, v_ne)
 
             # diagonalize fock matrix
-            epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nalpha))
+            n = nalpha - 1
+            if scf_iter == 0 and guess_mix == True :
+                n = nalpha
+            epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,n))
             
             # break spin symmetry?
             if guess_mix is True and scf_iter == 0:
