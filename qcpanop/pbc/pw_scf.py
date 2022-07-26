@@ -446,15 +446,15 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, ke_cutoff, n_kpts, cell, use_pseudopotential = False):
+    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], use_pseudopotential = False):
 
         """
 
         plane wave basis information
 
-        :param ke_cutoff: kinetic energy cutoff (in atomic units)
-        :param n_kpts: number of k-points
         :param cell: the unit cell
+        :param ke_cutoff: kinetic energy cutoff (in atomic units), default = 500 eV
+        :param n_kpts: number of k-points
         :param use_pseudopotential: use a pseudopotential for all atoms?
 
         members:
@@ -472,6 +472,8 @@ class plane_wave_basis():
         gth_params: GTH pseudopotential parameters
         omega: the unit cell volume
         kpts: the k-points
+        ke_cutoff: kinetic energy cutoff (atomic units)
+        n_kpts: number of k-points
 
         """
 
@@ -494,6 +496,8 @@ class plane_wave_basis():
         self.n_plane_waves_per_k = n_plane_waves_per_k
         self.kg_to_g = kg_to_g
         self.SI = SI
+        self.ke_cutoff = ke_cutoff
+        self.n_kpts = n_kpts
 
         self.use_pseudopotential = use_pseudopotential
         self.gth_params = None
@@ -729,12 +733,6 @@ def main():
     print('    ************************************************')
     print('')
 
-    # kinetic energy cutoff
-    ke_cutoff = 500.0 / 27.21138602
-
-    # desired number of k-points in each direction
-    n_kpts = [1, 1, 1]
-
     # define unit cell 
 
     # build unit cell
@@ -744,16 +742,16 @@ def main():
     #ase_atom = bulk('H', 'diamond', a = 8.88)
     #ase_atom = bulk('Ne', 'diamond', a = 10.26)
 
-    #a = np.eye(3) * 4.0
-    #atom = 'Ne 0 0 2'
+    a = np.eye(3) * 4.0
+    atom = 'B 0 0 0; H 0 0 1'
 
-    atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
-    a = ase_atom.cell
+    #atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
+    #a = ase_atom.cell
 
     cell = gto.M(a = a,
                  atom = atom,
                  unit = 'bohr',
-                 basis = 'gth-szv', #'cc-pvtz', #gth-dzv',
+                 basis = 'gth-dzv', #'cc-pvtz', #gth-dzv',
                  pseudo = 'gth-blyp',
                  verbose = 100,
                  #ke_cutoff = ke_cutoff,
@@ -765,7 +763,7 @@ def main():
     cell.build()
 
     # get plane wave basis information
-    basis = plane_wave_basis(ke_cutoff, n_kpts, cell, use_pseudopotential = True)
+    basis = plane_wave_basis(cell, ke_cutoff = 500.0 / 27.21138602, n_kpts = [1, 1, 1], use_pseudopotential = True)
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
@@ -825,7 +823,7 @@ def main():
 
     print("")
     print('    no. k-points:           %20i' % ( len(basis.kpts) ) )
-    print('    KE cutoff (eV)          %20.2f' % ( ke_cutoff * 27.21138602 ) )
+    print('    KE cutoff (eV)          %20.2f' % ( basis.ke_cutoff * 27.21138602 ) )
     print('    no. basis functions:    %20i' % ( len(basis.g) ) )
     print('    total_charge:           %20i' % ( total_charge ) )
     print('    no. alpha bands:        %20i' % ( nalpha ) )
@@ -855,45 +853,51 @@ def main():
         coulomb_energy = 0.0
 
         # loop over k-points
-        for j in range( len(basis.kpts) ):
+        for kid in range( len(basis.kpts) ):
 
             # form fock matrix
-            fock = form_fock_matrix(basis, j, v_xc_alpha, v_coulomb, v_ne)
+            fock = form_fock_matrix(basis, kid, v_xc_alpha, v_coulomb, v_ne)
 
             # diagonalize fock matrix
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nalpha))
             
             # break spin symmetry?
             if guess_mix is True and scf_iter == 0:
-                tmp = 0.5 * ( Calpha[:, nalpha-1] + Calpha[:, nalpha] )
-                Calpha[:, nalpha-1] = tmp
-                Calpha[:, nalpha] = tmp
+
+                c = np.cos(0.5 * np.pi)
+                s = np.sin(0.5 * np.pi)
+
+                tmp1 =  c * Calpha[:, nalpha-1] + s * Calpha[:, nalpha]
+                tmp2 = -s * Calpha[:, nalpha-1] + c * Calpha[:, nalpha]
+
+                Calpha[:, nalpha-1] = tmp1
+                Calpha[:, nalpha] = tmp2
 
             # one-electron part of the energy 
-            one_electron_energy += get_one_electron_energy(basis, Calpha, nalpha, j, v_ne)
+            one_electron_energy += get_one_electron_energy(basis, Calpha, nalpha, kid, v_ne)
 
             # coulomb part of the energy: 1/2 J
-            coulomb_energy += get_coulomb_energy(basis, Calpha, nalpha, j, v_coulomb)
+            coulomb_energy += get_coulomb_energy(basis, Calpha, nalpha, kid, v_coulomb)
 
             # accumulate density 
-            new_rho_alpha += get_density(basis, Calpha, nalpha, j)
+            new_rho_alpha += get_density(basis, Calpha, nalpha, kid)
 
             # now beta
 
             # form fock matrix
-            fock = form_fock_matrix(basis, j, v_xc_beta, v_coulomb, v_ne)
+            fock = form_fock_matrix(basis, kid, v_xc_beta, v_coulomb, v_ne)
 
             # diagonalize fock matrix
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
 
             # one-electron part of the energy 
-            one_electron_energy += get_one_electron_energy(basis, Cbeta, nbeta, j, v_ne)
+            one_electron_energy += get_one_electron_energy(basis, Cbeta, nbeta, kid, v_ne)
 
             # coulomb part of the energy: 1/2 J
-            coulomb_energy += get_coulomb_energy(basis, Cbeta, nbeta, j, v_coulomb)
+            coulomb_energy += get_coulomb_energy(basis, Cbeta, nbeta, kid, v_coulomb)
 
             # accumulate density 
-            new_rho_beta += get_density(basis, Cbeta, nbeta, j)
+            new_rho_beta += get_density(basis, Cbeta, nbeta, kid)
 
         # LSDA XC energy
         cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
@@ -902,7 +906,7 @@ def main():
 
         # damp density
         factor = 1.0
-        if damp_densities is True:
+        if damp_densities is True and scf_iter > 0 :
            factor = 0.5
         new_rho_alpha = factor * new_rho_alpha + (1.0 - factor) * rho_alpha
         new_rho_beta = factor * new_rho_beta + (1.0 - factor) * rho_beta
@@ -919,6 +923,7 @@ def main():
         # convergence in density
         rho_diff_norm = np.linalg.norm(error_vector) 
 
+        # update density
         rho = new_rho_alpha + new_rho_beta
         rho_alpha = new_rho_alpha
         rho_beta = new_rho_beta
