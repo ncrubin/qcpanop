@@ -26,18 +26,18 @@ from diis import DIIS
 # GTH pseudopotential parameters
 class gth_pseudopotential_parameters():
 
-    def __init__(self, cell):
+    def __init__(self, pp):
 
         """
 
-        get the GTH pseudopotential parameters
+        GTH pseudopotential parameter class
 
-        :param cell: the unit cell
+        :param pp: a pyscf pseudopotential object
 
         Attributes
         ----------
 
-        Zion: list of th valence charges of all centers
+        Zion: list of the valence charges of all centers
         rloc: list of rloc pseudopotential parameters for all centers (local)
         local_cn: list of c coefficients (c1, c2, c3, c4) for all centers (local)
         lmax: list of maximum l value for all centers (nonlocal)
@@ -47,67 +47,82 @@ class gth_pseudopotential_parameters():
 
         """
 
-        natom = len(cell._atom)
+        # parameters for local contribution to pseudopotential
 
-        self.Zion = np.zeros(natom, dtype = 'float64')
-        self.rloc = np.zeros(natom, dtype = 'float64')
-        self.local_cn = np.zeros( (natom, 4), dtype = 'float64')
+        # Zion
+        self.Zion = 0.0
+        for i in range(0,len(pp[0])):
+            self.Zion += pp[0][i]
 
-        self.lmax = np.zeros(natom, dtype = 'int64')
-        self.imax = np.zeros(natom, dtype = 'int64')
-        self.rl = np.zeros( (natom, 3), dtype='float64') # lmax = 3
-        self.hgth = np.zeros((natom, 3, 3, 3),dtype='float64') # lmax = 3; imax = 3
+        # rloc
+        self.rloc = pp[1]
 
-        for center in range (0,natom):
+        # c1, c2, c3, c4
+        self.local_cn = np.zeros( (4), dtype='float64')
+        for i in range(0,pp[2]):
+            self.local_cn[i] = pp[3][i]
+        
+        # parameters for non-local contribution to pseudopotential
 
-            element = cell._atom[center][0]
+        # lmax
+        self.lmax = pp[4]
 
-            pp = cell._pseudo[element]
+        if self.lmax > 3:
+            raise Exception('pseudopotentials currently only work with lmax <= 3. probably should change that.')
 
-            # parameters for local contribution to pseudopotential
+        # imax
+        self.imax = 0
+        for i in range(0,self.lmax):
+            myi = pp[5+i][1]
+            if myi > self.imax :
+                self.imax = myi
 
-            # Zion
-            self.Zion[center] = 0.0
-            for i in range(0,len(pp[0])):
-                self.Zion[center] += pp[0][i]
+        if self.imax > 3:
+            raise Exception('pseudopotentials currently only work with imax <= 3. probably should change that.')
 
-            # rloc
-            self.rloc[center] = pp[1]
+        # rl and h
 
-            # c1, c2, c3, c4
-            for i in range(0,pp[2]):
-                self.local_cn[center][i] = pp[3][i]
-            
-            # parameters for non-local contribution to pseudopotential
+        self.rl = np.zeros( (3), dtype='float64') # lmax = 3
+        self.hgth = np.zeros((3, 3, 3),dtype='float64') # lmax = 3; imax = 3
 
-            # lmax
-            self.lmax[center] = pp[4]
+        for l, proj in enumerate(pp[5:]):
 
-            if self.lmax[center] > 3:
-                raise Exception('pseudopotentials currently only work with lmax <= 3. probably should change that.')
+            self.rl[l], nl, hl = proj
+            hl = np.asarray(hl)
+            my_h = np.zeros((3, 3), dtype=hl.dtype)
+            if nl > 0:
+                my_h[:hl.shape[0], :hl.shape[1]] = hl
+                for i in range (0,3):
+                    for j in range (0,3):
+                        self.hgth[l, i, j] = my_h[i, j]
 
-            # imax
-            self.imax[center] = 0
-            for i in range(0,self.lmax[center]):
-                myi = pp[5+i][1]
-                if myi > self.imax[center] :
-                    self.imax[center] = myi
+def get_gth_pseudopotential_parameters(cell):
 
-            if self.imax[center] > 3:
-                raise Exception('pseudopotentials currently only work with imax <= 3. probably should change that.')
+    """
 
-            # rl and h
-            for l, proj in enumerate(pp[5:]):
+    get the GTH pseudopotential parameters
 
-                self.rl[center][l], nl, hl = proj
-                hl = np.asarray(hl)
-                my_h = np.zeros((3, 3), dtype=hl.dtype)
-                if nl > 0:
-                    my_h[:hl.shape[0], :hl.shape[1]] = hl
-                    for i in range (0,3):
-                        for j in range (0,3):
-                            self.hgth[center, l, i, j] = my_h[i, j]
+    :param cell: the unit cell
 
+    :return gth_params: a list of pseudopotential parameters for each center
+
+    """
+
+    gth_params = []
+
+    natom = len(cell._atom)
+
+    for center in range (0,natom):
+
+        element = cell._atom[center][0]
+
+        pp = cell._pseudo[element]
+
+        gth_params.append( gth_pseudopotential_parameters(pp) )
+
+    return gth_params
+
+ 
 
 def get_local_pseudopotential_gth(SI, g2, omega, gth_params, tiny = 1e-8):
 
@@ -124,14 +139,14 @@ def get_local_pseudopotential_gth(SI, g2, omega, gth_params, tiny = 1e-8):
 
     vsg = np.zeros(len(g2),dtype='complex128')
 
-    for center in range (0, len(gth_params.local_cn)) :
+    for center in range (0, len(gth_params) ) :
 
-        c1 = gth_params.local_cn[center][0]
-        c2 = gth_params.local_cn[center][1]
-        c3 = gth_params.local_cn[center][2]
-        c4 = gth_params.local_cn[center][3]
-        rloc = gth_params.rloc[center]
-        Zion = gth_params.Zion[center]
+        c1 = gth_params[center].local_cn[0]
+        c2 = gth_params[center].local_cn[1]
+        c3 = gth_params[center].local_cn[2]
+        c4 = gth_params[center].local_cn[3]
+        rloc = gth_params[center].rloc
+        Zion = gth_params[center].Zion
 
         largeind = g2 > tiny
         smallind = g2 <= tiny #|G|^2->0 limit
@@ -176,10 +191,13 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
     gmax = len(gv)
 
     # number of atoms
-    natom = len(gth_params.local_cn)
+    natom = len(gth_params)
 
-    lmax = np.amax(gth_params.lmax)
-    imax = np.amax(gth_params.imax)
+    # maximum l and i hard-coded as 3. a pp with l,i exceeding this value
+    # should be caught by the exceptions in gth_pseudopotential_parameters()
+    lmax = 3 
+    imax = 3 
+
     mmax = 2 * (lmax - 1) + 1
 
     # spherical harmonics should be independent of the center
@@ -194,7 +212,7 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
             for m in range(-l,l+1):
                 spherical_harmonics_lm[l, m+l, :] = scipy.special.sph_harm(m,l,phigv,thetagv)
             for i in range(imax):
-                projector_li[center, l, i, :] = pbcgto.pseudo.pp.projG_li(rgv, l, i, gth_params.rl[center, l])
+                projector_li[center, l, i, :] = pbcgto.pseudo.pp.projG_li(rgv, l, i, gth_params[center].rl[l])
 
     return spherical_harmonics_lm, projector_li
 
@@ -214,21 +232,21 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
     """
 
     # number of atoms
-    natom = len(gth_params.local_cn)
+    natom = len(gth_params)
 
     vsg = 0.0
 
     for center in range (0, natom):
 
-        my_h = gth_params.hgth[center]
+        my_h = gth_params[center].hgth
         my_pg = pg[center] 
 
         tmp_vsg = 0.0
 
-        for l in range(0,gth_params.lmax[center]):
+        for l in range(0,gth_params[center].lmax):
             vsgij = vsgsp = 0.0
-            for i in range(0,gth_params.imax[center]):
-                for j in range(0,gth_params.imax[center]):
+            for i in range(0,gth_params[center].imax):
+                for j in range(0,gth_params[center].imax):
                     vsgij += my_pg[l, i, gind] * my_h[l, i, j] * my_pg[l,j,:]
 
             for m in range(-l,l+1):
@@ -517,7 +535,7 @@ class plane_wave_basis():
         self.use_pseudopotential = use_pseudopotential
         self.gth_params = None
         if ( self.use_pseudopotential ):
-            self.gth_params = gth_pseudopotential_parameters(cell)
+            self.gth_params = get_gth_pseudopotential_parameters(cell)
 
         self.omega = np.linalg.det(cell.a)
 
@@ -785,7 +803,7 @@ def pw_uks(cell, basis, xc = 'lda'):
     
     if basis.use_pseudopotential: 
         for i in range (0,len(valence_charges)):
-            valence_charges[i] = int(basis.gth_params.Zion[i])
+            valence_charges[i] = int(basis.gth_params[i].Zion)
 
     # electron-nucleus potential
     v_ne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
