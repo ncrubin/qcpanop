@@ -1,6 +1,5 @@
 """
 Use pyscf's cell infrastructure to define computational cell and grids
-
 Implement Hamiltonian and SCF cycle
 """
 from itertools import product
@@ -17,15 +16,11 @@ from pyscf.pbc import tools
 def get_SI(cell, Gv=None):
     '''Calculate the structure factor (0D, 1D, 2D, 3D) for all atoms;
     see MH (3.34).
-
     S_{I}(G) = exp(iG.R_{I})
-
     Args:
         cell : instance of :class:`Cell`
-
         Gv : (N,3) array
             G vectors
-
     Returns:
         SI : (natm, ngrids) ndarray, dtype=np.complex128
             The structure factor for each atom at each G-vector.
@@ -49,12 +44,9 @@ def get_SI(cell, Gv=None):
 
 def get_Gv(cell, mesh=None, **kwargs):
     '''Calculate three-dimensional G-vectors for the cell; see MH (3.8).
-
     Indices along each direction go as [0...N-1, -N...-1] to follow FFT convention.
-
     Args:
         cell : instance of :class:`Cell`
-
     Returns:
         Gv : (ngrids, 3) ndarray of floats
             The array of G-vectors.
@@ -78,22 +70,17 @@ def get_Gv(cell, mesh=None, **kwargs):
 
 def get_uniform_grids(cell, mesh=None, **kwargs):
     '''Generate a uniform real-space grid consistent w/ samp thm; see MH (3.19).
-
     R = h N q
-
     h is the matrix of lattice vectors (bohr)
     N is diagonal with entry as 1/N_{x, y, z}
     q is a vector of ints [0, N_{x, y, z} - 1]
     N_{x, y, z} chosen s.t. N_{x, y, z} >= 2 * max(g_{x, y, z}) + 1
     where g is the tuple of
-
     Args:
         cell : instance of :class:`Cell`
-
     Returns:
         coords : (ngx*ngy*ngz, 3) ndarray
             The real-space grid point coordinates.
-
     '''
     if mesh is None: mesh = cell.mesh
     if 'gs' in kwargs:
@@ -114,7 +101,6 @@ def get_uniform_grids(cell, mesh=None, **kwargs):
 def ke_matrix(cell, kpoint=np.array([0, 0, 0])):
     """
     construct kinetic-energy matrix at a particular k-point
-
     -0.5 nabla^{2} phi_{r}(g) = -0.5 (iG)^2 (1/sqrt(omega))exp(iG.r)
     =0.5G^2 phi_{r}(g)
     """
@@ -135,7 +121,6 @@ def potential_matrix(cell, kpoint=np.array([0, 0, 0])):
 def get_nuc(mydf, kpts=None):
     """
     v(r) = \sum_{G}v(G)exp(iG.r)
-
     :param mydf:
     :param kpts:
     :return:
