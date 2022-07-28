@@ -278,13 +278,18 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
 
     gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
 
+    # list of indices for basis functions for this k-point
     gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
+
+    # basis functions for this k-point
     gk = basis.g[gkind]
 
+    # spherical harmonics and projectors in the basis of PWs for this K-point
     sphg, pg = get_spherical_harmonics_and_projectors_gth(basis.kpts[kid] + gk, basis.gth_params)
 
     for aa in range(basis.n_plane_waves_per_k[kid]):
 
+        # get a row of the pseudopotential matrix for this k-point
         gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
 
     return gth_pseudopotential
@@ -641,7 +646,6 @@ def form_fock_matrix(basis, kid, v = None):
     :param basis: plane wave basis information
     :param kid: index for a given k-point
     :param v: the potential ( coulomb + xc + electron-nucleus / local pp )
-    :param v_pp_nonlocal: nonlocal part of the pseudopotential
 
     :return fock: the fock matrix
 
@@ -653,7 +657,7 @@ def form_fock_matrix(basis, kid, v = None):
     if v is not None:
         fock += get_matrix_element(basis, kid, v)
     
-    # get pseudopotential
+    # get non-local part of the pseudopotential
     if basis.use_pseudopotential:
         fock += get_gth_pseudopotential(basis, kid, 'nonlocal')
 
@@ -664,7 +668,7 @@ def form_fock_matrix(basis, kid, v = None):
 
     return fock
 
-def get_one_electron_energy(basis, C, N, kid, v_ne = None, v_pp_nonlocal = None):
+def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     """
 
     get one-electron part of the energy
@@ -674,7 +678,6 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None, v_pp_nonlocal = None)
     :param N: the number of electrons
     :param kid: index for a given k-point
     :param v_ne: nuclear electron potential or local part of the pseudopotential
-    :param v_pp_nonlocal: nonlocal part of the pseudopotential
 
     :return one_electron_energy: the one-electron energy
 
