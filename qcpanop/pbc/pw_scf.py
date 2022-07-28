@@ -124,36 +124,35 @@ def get_gth_pseudopotential_parameters(cell):
 
  
 
-def get_local_pseudopotential_gth(SI, g2, omega, gth_params, tiny = 1e-8):
+def get_local_pseudopotential_gth(basis, tiny = 1e-8):
+
 
     """
 
     Construct and return local contribution to GTH pseudopotential
 
-    :param SI: structure factor
-    :param g2: square modulus of plane wave basis functions
-    :param omega: unit cell volume
-    :param gth_params: GTH pseudopotential parameters
+    :param basis: plane wave basis information
+
     :return: local contribution to GTH pseudopotential
     """
 
-    vsg = np.zeros(len(g2),dtype='complex128')
+    vsg = np.zeros(len(basis.g2),dtype='complex128')
 
-    for center in range (0, len(gth_params) ) :
+    for center in range (0, len(basis.gth_params) ) :
 
-        c1 = gth_params[center].local_cn[0]
-        c2 = gth_params[center].local_cn[1]
-        c3 = gth_params[center].local_cn[2]
-        c4 = gth_params[center].local_cn[3]
-        rloc = gth_params[center].rloc
-        Zion = gth_params[center].Zion
+        c1 = basis.gth_params[center].local_cn[0]
+        c2 = basis.gth_params[center].local_cn[1]
+        c3 = basis.gth_params[center].local_cn[2]
+        c4 = basis.gth_params[center].local_cn[3]
+        rloc = basis.gth_params[center].rloc
+        Zion = basis.gth_params[center].Zion
 
-        largeind = g2 > tiny
-        smallind = g2 <= tiny #|G|^2->0 limit
+        largeind = basis.g2 > tiny
+        smallind = basis.g2 <= tiny #|G|^2->0 limit
 
-        my_g2 = g2[largeind]
-        SI_large = SI[center,largeind]
-        SI_small = SI[center,smallind]
+        my_g2 = basis.g2[largeind]
+        SI_large = basis.SI[center,largeind]
+        SI_small = basis.SI[center,smallind]
 
         rloc2 = rloc * rloc
         rloc3 = rloc * rloc2
@@ -169,7 +168,7 @@ def get_local_pseudopotential_gth(SI, g2, omega, gth_params, tiny = 1e-8):
         vsg[largeind] += vsgl
         vsg[smallind] += vsgs
 
-    return vsg / omega
+    return vsg / basis.omega
 
 def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
 
@@ -264,18 +263,18 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
 
     """
 
-    get the GTH pseudopotential matrix
+    get the GTH pseudopotential matrix for a given k-point
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
     :param pp_component: flag to request only the local or nonlocal components of the potential
 
-    :return gth_pseudopotential: the GTH pseudopotential matrix
+    :return gth_pseudopotential: the GTH pseudopotential matrix in the plane wave basis for the orbitals, for this k-point (up to E <= ke_cutoff)
 
     """
 
-    if pp_component != None and pp_component != 'local' and pp_component != 'nonlocal':
-        raise Exception('invalid pseudopoential component')
+    if pp_component != 'nonlocal':
+        raise Exception('this function only returns the nonlocal part of the pseudopoential')
 
     gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
 
@@ -286,39 +285,20 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
 
     for aa in range(basis.n_plane_waves_per_k[kid]):
 
-        ik = basis.kg_to_g[kid][aa]
-        gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
-        #inds = basis.miller_to_g[gdiff.T.tolist()]
-        inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
-
-        if pp_component == 'local' :
-
-            gth_pseudopotential[aa, aa:] = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], basis.omega, basis.gth_params)
-
-        elif pp_component == 'nonlocal' :
-
-            gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
-
-        else :
-
-            vsg_local = get_local_pseudopotential_gth(basis.SI[:, inds], basis.g2[inds], basis.omega, basis.gth_params)
-            vsg_nonlocal = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
-
-            gth_pseudopotential[aa, aa:] = vsg_local
-            gth_pseudopotential[aa, aa:] += vsg_nonlocal
+        gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
 
     return gth_pseudopotential
 
-def get_potential(basis, kid, vg):
+def get_matrix_element(basis, kid, vg):
 
     """
 
-    get the potential matrix for given k-point
+    unpack the potential matrix for given k-point: <G'|V|G''> = V(G'-G'')
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
-    :param vg: full potential container
-    :return potential: the pseudopotential matrix
+    :param vg: full potential container in the plane wave basis for the density (up to E <= 2 x ke_cutoff)
+    :return potential: the pseudopotential matrix in the plane wave basis for the orbitals, for this k-point (up to E <= ke_cutoff)
 
     """
 
@@ -648,36 +628,30 @@ def get_density(basis, C, N, kid):
 
     return ( 1.0 / len(basis.kpts) ) * rho
 
-def form_fock_matrix(basis, kid, v_xc, v_coulomb, v_ne):
+def form_fock_matrix(basis, kid, v = None): 
     """
 
     form fock matrix
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
-    :param v_xc: dft exchange-correlation potential
-    :param v_coulomb: coulomb potential
-    :param v_ne: nuclear electron potential
+    :param v: the potential ( coulomb + xc + electron-nucleus / local pp )
+    :param v_pp_nonlocal: nonlocal part of the pseudopotential
 
     :return fock: the fock matrix
 
     """
 
     fock = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
+
+    # unpack potential
+    if v is not None:
+        fock += get_matrix_element(basis, kid, v)
     
-    # get potential (dft)
-    fock += get_potential(basis, kid, v_xc)
-    
-    # get potential (coulomb)
-    fock += get_potential(basis, kid, v_coulomb)
-    
+    # get pseudopotential
     if basis.use_pseudopotential:
-        # get pseudopotential
-        fock += get_gth_pseudopotential(basis, kid)
-    else:
-        # get potential (nuclear-electronic)
-        fock += get_potential(basis, kid, v_ne)
-    
+        fock += get_gth_pseudopotential(basis, kid, 'nonlocal')
+
     # get kinetic energy
     kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
     diagonals = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 + fock.diagonal()
@@ -685,7 +659,7 @@ def form_fock_matrix(basis, kid, v_xc, v_coulomb, v_ne):
 
     return fock
 
-def get_one_electron_energy(basis, C, N, kid, v_ne):
+def get_one_electron_energy(basis, C, N, kid, v_ne = None, v_pp_nonlocal = None):
     """
 
     get one-electron part of the energy
@@ -694,7 +668,8 @@ def get_one_electron_energy(basis, C, N, kid, v_ne):
     :param C: molecular orbital coefficients
     :param N: the number of electrons
     :param kid: index for a given k-point
-    :param v_ne: nuclear electron potential
+    :param v_ne: nuclear electron potential or local part of the pseudopotential
+    :param v_pp_nonlocal: nonlocal part of the pseudopotential
 
     :return one_electron_energy: the one-electron energy
 
@@ -702,10 +677,12 @@ def get_one_electron_energy(basis, C, N, kid, v_ne):
 
     # oei = T + V 
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
+
+    if v_ne is not None:
+        oei += get_matrix_element(basis, kid, v_ne)
+
     if basis.use_pseudopotential:
-        oei = get_gth_pseudopotential(basis, kid)
-    else:
-        oei = get_potential(basis, kid, v_ne)
+        oei += get_gth_pseudopotential(basis, kid, 'nonlocal')
 
     kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
 
@@ -741,7 +718,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     # oei = 1/2 J
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
-    oei = get_potential(basis, kid, v_coulomb)
+    oei = get_matrix_element(basis, kid, v_coulomb)
 
     oei = oei + oei.conj().T
     for pp in range(basis.n_plane_waves_per_k[kid]):
@@ -806,7 +783,12 @@ def pw_uks(cell, basis, xc = 'lda'):
             valence_charges[i] = int(basis.gth_params[i].Zion)
 
     # electron-nucleus potential
-    v_ne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
+    v_ne = None
+    if not basis.use_pseudopotential: 
+        v_ne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
+    else :
+        v_ne = get_local_pseudopotential_gth(basis)
+
 
     # number of alpha and beta bands
     total_charge = 0
@@ -860,13 +842,16 @@ def pw_uks(cell, basis, xc = 'lda'):
         one_electron_energy = 0.0
         coulomb_energy = 0.0
 
+        va = v_coulomb + v_xc_alpha + v_ne
+        vb = v_coulomb + v_xc_beta + v_ne
+
         # loop over k-points
         for kid in range( len(basis.kpts) ):
 
             # alpha
 
             # form fock matrix
-            fock = form_fock_matrix(basis, kid, v_xc_alpha, v_coulomb, v_ne)
+            fock = form_fock_matrix(basis, kid, v = va)
 
             # diagonalize fock matrix
             n = nalpha - 1
@@ -887,7 +872,11 @@ def pw_uks(cell, basis, xc = 'lda'):
                 Calpha[:, nalpha] = tmp2
 
             # one-electron part of the energy 
-            one_electron_energy += get_one_electron_energy(basis, Calpha, nalpha, kid, v_ne)
+            one_electron_energy += get_one_electron_energy(basis, 
+                                                           Calpha, 
+                                                           nalpha, 
+                                                           kid, 
+                                                           v_ne = v_ne)
 
             # coulomb part of the energy: 1/2 J
             coulomb_energy += get_coulomb_energy(basis, Calpha, nalpha, kid, v_coulomb)
@@ -898,13 +887,17 @@ def pw_uks(cell, basis, xc = 'lda'):
             # now beta
 
             # form fock matrix
-            fock = form_fock_matrix(basis, kid, v_xc_beta, v_coulomb, v_ne)
+            fock = form_fock_matrix(basis, kid, v = vb)
 
             # diagonalize fock matrix
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
 
             # one-electron part of the energy 
-            one_electron_energy += get_one_electron_energy(basis, Cbeta, nbeta, kid, v_ne)
+            one_electron_energy += get_one_electron_energy(basis, 
+                                                           Cbeta, 
+                                                           nbeta, 
+                                                           kid, 
+                                                           v_ne = v_ne)
 
             # coulomb part of the energy: 1/2 J
             coulomb_energy += get_coulomb_energy(basis, Cbeta, nbeta, kid, v_coulomb)
@@ -1002,4 +995,7 @@ def pw_uks(cell, basis, xc = 'lda'):
     print('')
     print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc ) )
     print('')
+
+    assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc, -9.802901383306) )
+
 

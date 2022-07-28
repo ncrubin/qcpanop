@@ -6,22 +6,35 @@ from pw_scf import pw_uks
 from pyscf import dft, scf, pbc
 from pyscf.pbc import gto, scf
 
+import ase
+from ase.build import bulk
+import pyscf.pbc.tools.pyscf_ase as pyscf_ase
+
+
 def main():
 
     # define unit cell 
     
-    a = np.eye(3) * 4.0
-    atom = 'B 0 0 0; H 0 0 2'
+    #a = np.eye(3) * 4.0
+    #atom = 'H 0 0 0'
+
+    #ase_atom = bulk('Si', 'diamond', a = 10.26)
+    ase_atom = bulk('C', 'diamond', a = 6.74)
+    #ase_atom = bulk('H', 'diamond', a = 8.88)
+    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
+
+    atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
+    a = ase_atom.cell 
     
     cell = gto.M(a = a,
                  atom = atom,
                  unit = 'bohr',
-                 basis = 'cc-pvqz', 
+                 basis = 'cc-pvdz', 
                  pseudo = 'gth-blyp',
                  verbose = 100,
                  ke_cutoff = 10000 / 27.21138602,
                  precision = 1.0e-8,
-                 #spin = 1,
+                 spin = 1,
                  dimension = 3)
     
     cell.build()
@@ -31,7 +44,7 @@ def main():
                              ke_cutoff = 1000.0 / 27.21138602, 
                              n_kpts = [1, 1, 1], 
                              use_pseudopotential = True)
-    
+
     # run pyscf dft
     from pyscf import dft, scf, pbc
     #kmf = pbc.scf.KUHF(cell, kpts = k).run()
