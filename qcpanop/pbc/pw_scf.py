@@ -459,7 +459,7 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], use_pseudopotential = False):
+    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1]):
 
         """
 
@@ -468,7 +468,6 @@ class plane_wave_basis():
         :param cell: the unit cell
         :param ke_cutoff: kinetic energy cutoff (in atomic units), default = 500 eV
         :param n_kpts: number of k-points
-        :param use_pseudopotential: use a pseudopotential for all atoms?
 
         members:
 
@@ -487,6 +486,7 @@ class plane_wave_basis():
         kpts: the k-points
         ke_cutoff: kinetic energy cutoff (atomic units)
         n_kpts: number of k-points
+        charge: charge
 
         """
 
@@ -512,12 +512,17 @@ class plane_wave_basis():
         self.ke_cutoff = ke_cutoff
         self.n_kpts = n_kpts
 
-        self.use_pseudopotential = use_pseudopotential
+        self.use_pseudopotential = False
+        if cell.pseudo is not None :
+            self.use_pseudopotential = True
+
         self.gth_params = None
         if ( self.use_pseudopotential ):
             self.gth_params = get_gth_pseudopotential_parameters(cell)
 
         self.omega = np.linalg.det(cell.a)
+
+        self.charge = cell.charge
 
 
 def get_plane_waves_per_k(ke_cutoff, k, g):
@@ -733,7 +738,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     return coulomb_energy
 
 
-def pw_uks(cell, basis, xc = 'lda'):
+def pw_uks(cell, basis, xc = 'lda', guess_mix = True):
 
     """
 
@@ -795,11 +800,10 @@ def pw_uks(cell, basis, xc = 'lda'):
     for I in range ( len(valence_charges) ):
         total_charge += valence_charges[I]
 
+    total_charge -= basis.charge
+
     nbeta = int(total_charge / 2)
     nalpha = total_charge - nbeta
-
-    # break spin symmetry?
-    guess_mix = True
 
     # damp densities (helps with convergence sometimes)
     damp_densities = True
@@ -885,6 +889,8 @@ def pw_uks(cell, basis, xc = 'lda'):
             new_rho_alpha += get_density(basis, Calpha, nalpha, kid)
 
             # now beta
+            if nbeta == 0 : 
+                continue
 
             # form fock matrix
             fock = form_fock_matrix(basis, kid, v = vb)
