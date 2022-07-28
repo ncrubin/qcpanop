@@ -16,7 +16,7 @@ def main():
     # define unit cell 
     
     #a = np.eye(3) * 4.0
-    #atom = 'H 0 0 0'
+    #atom = 'C 0 0 0'
 
     #ase_atom = bulk('Si', 'diamond', a = 10.26)
     ase_atom = bulk('C', 'diamond', a = 6.74)
@@ -29,12 +29,13 @@ def main():
     cell = gto.M(a = a,
                  atom = atom,
                  unit = 'bohr',
-                 basis = 'cc-pvdz', 
+                 basis = 'gth-dzv', #'cc-pvqz',
                  pseudo = 'gth-blyp',
                  verbose = 100,
-                 ke_cutoff = 10000 / 27.21138602,
+                 ke_cutoff = 5000 / 27.21138602,
                  precision = 1.0e-8,
-                 spin = 1,
+                 charge = 0,
+                 spin = 0,
                  dimension = 3)
     
     cell.build()
@@ -42,8 +43,7 @@ def main():
     # get plane wave basis information
     basis = plane_wave_basis(cell, 
                              ke_cutoff = 1000.0 / 27.21138602, 
-                             n_kpts = [1, 1, 1], 
-                             use_pseudopotential = True)
+                             n_kpts = [1, 1, 1])
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
@@ -53,7 +53,7 @@ def main():
 
    
     # run plane wave scf 
-    pw_uks(cell, basis, xc = 'lda')
+    pw_uks(cell, basis, xc = 'lda', guess_mix = True)
 
 if __name__ == "__main__":
     main()
