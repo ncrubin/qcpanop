@@ -21,7 +21,7 @@ import pyscf.pbc.tools.pyscf_ase as pyscf_ase
 
 import scipy
 
-from diis import DIIS
+from qcpanop.pbc.diis import DIIS
 
 # GTH pseudopotential parameters
 class gth_pseudopotential_parameters():
