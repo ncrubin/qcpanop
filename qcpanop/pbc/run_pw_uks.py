@@ -16,7 +16,7 @@ def main():
     # define unit cell 
     
     #a = np.eye(3) * 4.0
-    #atom = 'C 0 0 0'
+    #atom = 'Ne 0 0 1.0'
 
     #ase_atom = bulk('Si', 'diamond', a = 10.26)
     ase_atom = bulk('C', 'diamond', a = 6.74)
@@ -43,7 +43,8 @@ def main():
     # get plane wave basis information
     basis = plane_wave_basis(cell, 
                              ke_cutoff = 1000.0 / 27.21138602, 
-                             n_kpts = [1, 1, 1])
+                             n_kpts = [1, 1, 1],
+                             nl_pp_use_legendre = True)
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
