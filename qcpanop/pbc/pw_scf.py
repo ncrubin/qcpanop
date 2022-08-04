@@ -178,15 +178,14 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
 
     :param gv: plane wave basis functions plus kpt
     :param gth_params: GTH pseudopotential parameters
-    :param rl: list of [rs, rp]
-    :param lmax: maximum angular momentum, l
-    :param imax: maximum i for projectors
-    :return: spherical harmonics and projectors for GTH pseudopotential
+    :return spherical_harmonics: spherical harmonics in plane wave basis for k-point
+    :return projectors_li: projectors for GTH pseudopotential in plane wave basis for k-point
+    :return legendre: legendre polynomials 
     """
 
     # spherical polar representation of plane wave basis 
     rgv, thetagv, phigv = pbcgto.pseudo.pp.cart2polar(gv)
-
+    
     gmax = len(gv)
 
     # number of atoms
@@ -202,18 +201,24 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
     # spherical harmonics should be independent of the center
     spherical_harmonics_lm = np.zeros((lmax, mmax, gmax),dtype='complex128')
 
+    # legendre polynomials
+    legendre = []
+
     # projectors should be center-dependent
     projector_li = np.zeros((natom, lmax, imax, gmax),dtype='complex128')
+
 
     for center in range (0,natom) :
 
         for l in range(lmax):
             for m in range(-l,l+1):
-                spherical_harmonics_lm[l, m+l, :] = scipy.special.sph_harm(m,l,phigv,thetagv)
+                spherical_harmonics_lm[l, m+l, :] = scipy.special.sph_harm(m, l, phigv, thetagv)
             for i in range(imax):
                 projector_li[center, l, i, :] = pbcgto.pseudo.pp.projG_li(rgv, l, i, gth_params[center].rl[l])
 
-    return spherical_harmonics_lm, projector_li
+            legendre.append( scipy.special.legendre(l) )
+
+    return spherical_harmonics_lm, projector_li, legendre
 
 def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
 
@@ -258,8 +263,55 @@ def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
 
     return vsg / omega
 
+def get_nonlocal_pseudopotential_gth_legendre(SI, legendre, pg, gind, gth_params, omega, gv):
 
-def get_gth_pseudopotential(basis, kid, pp_component = None):
+    """
+
+    Construct and return non-local contribution to GTH pseudopotential
+
+    :param SI: structure factor
+    :param legendre: legendre polynomials
+    :param pg: projectors 
+    :param gind: plane wave basis function label 
+    :param gth_params: GTH pseudopotential parameters
+    :param omega: unit cell volume
+    :param gv: plane wave basis functions plus kpt
+    :return: non-local contribution to GTH pseudopotential
+    """
+
+    # number of atoms
+    natom = len(gth_params)
+
+    vsg = 0.0
+
+    nrmgv = np.linalg.norm(gv, axis=1)
+
+    for center in range (0, natom):
+
+        my_h = gth_params[center].hgth
+        my_pg = pg[center] 
+
+        tmp_vsg = 0.0
+
+        for l in range(0,gth_params[center].lmax):
+            vsgij = vsgsp = 0.0
+            for i in range(0,gth_params[center].imax):
+                for j in range(0,gth_params[center].imax):
+                    vsgij += my_pg[l, i, gind] * my_h[l, i, j] * my_pg[l,j,:]
+
+            ratio = nrmgv[gind] * nrmgv[:]
+            ratio = np.divide(gv[gind, 0] * gv[:, 0] + gv[gind, 1] * gv[:, 1] + gv[gind, 2] * gv[:, 2], ratio, out = np.zeros_like(ratio), where = ratio != 0.0)
+            vsgsp = (2*l + 1)/(4 * np.pi) * np.polyval(legendre[l],  ratio[:, ])
+
+            tmp_vsg += vsgij * vsgsp
+
+        # accumulate with structure factors
+        vsg += tmp_vsg * SI[center][gind] * SI[center][:].conj()
+
+    return vsg / omega
+
+
+def get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = False):
 
     """
 
@@ -267,14 +319,11 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
-    :param pp_component: flag to request only the local or nonlocal components of the potential
+    :param use_legendre: flag to indicate use of spherical harmonics sum rule
 
     :return gth_pseudopotential: the GTH pseudopotential matrix in the plane wave basis for the orbitals, for this k-point (up to E <= ke_cutoff)
 
     """
-
-    if pp_component != 'nonlocal':
-        raise Exception('this function only returns the nonlocal part of the pseudopoential')
 
     gth_pseudopotential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
 
@@ -285,16 +334,20 @@ def get_gth_pseudopotential(basis, kid, pp_component = None):
     gk = basis.g[gkind]
 
     # spherical harmonics and projectors in the basis of PWs for this K-point
-    sphg, pg = get_spherical_harmonics_and_projectors_gth(basis.kpts[kid] + gk, basis.gth_params)
+    sphg, pg, legg = get_spherical_harmonics_and_projectors_gth(basis.kpts[kid] + gk, basis.gth_params)
 
-    for aa in range(basis.n_plane_waves_per_k[kid]):
-
-        # get a row of the pseudopotential matrix for this k-point
-        gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
+    if use_legendre: 
+        for aa in range(basis.n_plane_waves_per_k[kid]):
+            # get a row of the pseudopotential matrix for this k-point
+            gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth_legendre(basis.SI[:,gkind], legg, pg, aa, basis.gth_params, basis.omega, basis.kpts[kid] + gk)[aa:]
+    else:
+        for aa in range(basis.n_plane_waves_per_k[kid]):
+            # get a row of the pseudopotential matrix for this k-point
+            gth_pseudopotential[aa, aa:] = get_nonlocal_pseudopotential_gth(basis.SI[:,gkind], sphg, pg, aa, basis.gth_params, basis.omega)[aa:]
 
     return gth_pseudopotential
 
-def get_matrix_element(basis, kid, vg):
+def get_matrix_elements(basis, kid, vg):
 
     """
 
@@ -464,7 +517,7 @@ def get_plane_wave_basis(ke_cutoff, a, b):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1]):
+    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], nl_pp_use_legendre = False):
 
         """
 
@@ -473,6 +526,7 @@ class plane_wave_basis():
         :param cell: the unit cell
         :param ke_cutoff: kinetic energy cutoff (in atomic units), default = 500 eV
         :param n_kpts: number of k-points
+        :param nl_pp_use_legendre: use sum rule expression for spherical harmonics?
 
         members:
 
@@ -497,6 +551,8 @@ class plane_wave_basis():
 
         a = cell.a
         h = cell.reciprocal_vectors()
+
+        self.nl_pp_use_legendre = nl_pp_use_legendre
 
         # get k-points
         self.kpts = cell.make_kpts(n_kpts, wrap_around = True)
@@ -655,11 +711,11 @@ def form_fock_matrix(basis, kid, v = None):
 
     # unpack potential
     if v is not None:
-        fock += get_matrix_element(basis, kid, v)
+        fock += get_matrix_elements(basis, kid, v)
     
     # get non-local part of the pseudopotential
     if basis.use_pseudopotential:
-        fock += get_gth_pseudopotential(basis, kid, 'nonlocal')
+        fock += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
     # get kinetic energy
     kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
@@ -687,10 +743,10 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
 
     if v_ne is not None:
-        oei += get_matrix_element(basis, kid, v_ne)
+        oei += get_matrix_elements(basis, kid, v_ne)
 
     if basis.use_pseudopotential:
-        oei += get_gth_pseudopotential(basis, kid, 'nonlocal')
+        oei += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
     kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
 
@@ -726,7 +782,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     # oei = 1/2 J
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
-    oei = get_matrix_element(basis, kid, v_coulomb)
+    oei = get_matrix_elements(basis, kid, v_coulomb)
 
     oei = oei + oei.conj().T
     for pp in range(basis.n_plane_waves_per_k[kid]):
