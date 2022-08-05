@@ -286,6 +286,8 @@ def get_nonlocal_pseudopotential_gth_legendre(SI, legendre, pg, gind, gth_params
 
     nrmgv = np.linalg.norm(gv, axis=1)
 
+    rgv, thetagv, phigv = pbcgto.pseudo.pp.cart2polar(gv)
+
     for center in range (0, natom):
 
         my_h = gth_params[center].hgth
@@ -299,9 +301,12 @@ def get_nonlocal_pseudopotential_gth_legendre(SI, legendre, pg, gind, gth_params
                 for j in range(0,gth_params[center].imax):
                     vsgij += my_pg[l, i, gind] * my_h[l, i, j] * my_pg[l,j,:]
 
-            ratio = nrmgv[gind] * nrmgv[:]
-            ratio = np.divide(gv[gind, 0] * gv[:, 0] + gv[gind, 1] * gv[:, 1] + gv[gind, 2] * gv[:, 2], ratio, out = np.zeros_like(ratio), where = ratio != 0.0)
-            vsgsp = (2*l + 1)/(4 * np.pi) * np.polyval(legendre[l],  ratio[:, ])
+            #ratio = nrmgv[gind] * nrmgv[:]
+            #ratio = np.divide(gv[gind, 0] * gv[:, 0] + gv[gind, 1] * gv[:, 1] + gv[gind, 2] * gv[:, 2], ratio, out = np.zeros_like(ratio), where = ratio != 0.0)
+            #vsgsp = (2*l + 1)/(4 * np.pi) * np.polyval(legendre[l],  ratio[:, ])
+
+            cos_gamma = np.cos(thetagv[gind]) * np.cos(thetagv[:]) + np.sin(thetagv[gind]) * np.sin(thetagv[:]) * np.cos( phigv[gind] - phigv[:] )
+            vsgsp = (2*l + 1)/(4 * np.pi) * np.polyval(legendre[l],  cos_gamma )
 
             tmp_vsg += vsgij * vsgsp
 
