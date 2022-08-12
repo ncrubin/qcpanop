@@ -21,7 +21,6 @@ from pw_pbc.diis import DIIS
 from pw_pbc.pseudopotential import get_local_pseudopotential_gth
 from pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
 
-from pw_pbc.basis import plane_wave_basis
 from pw_pbc.basis import get_miller_indices
 
 def get_matrix_elements(basis, kid, vg):
