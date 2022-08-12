@@ -1,7 +1,6 @@
-import numpy as np
 
-from pw_scf import plane_wave_basis
-from pw_scf import pw_uks
+from pw_pbc.basis import plane_wave_basis
+from pw_pbc.scf import uks
 
 from pyscf import dft, scf, pbc
 from pyscf.pbc import gto, scf
@@ -42,7 +41,7 @@ def main():
 
     # get plane wave basis information
     basis = plane_wave_basis(cell, 
-                             ke_cutoff = 500.0 / 27.21138602, 
+                             ke_cutoff = 1000.0 / 27.21138602, 
                              n_kpts = [1, 1, 1],
                              nl_pp_use_legendre = True)
 
@@ -54,7 +53,7 @@ def main():
 
    
     # run plane wave scf 
-    pw_uks(cell, basis, xc = 'lda', guess_mix = True)
+    uks(cell, basis, xc = 'lda', guess_mix = True)
 
 if __name__ == "__main__":
     main()
