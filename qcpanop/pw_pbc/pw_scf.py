@@ -699,6 +699,64 @@ def get_density(basis, C, N, kid):
 
     return ( 1.0 / len(basis.kpts) ) * rho
 
+def get_exact_exchange_energy(basis, C, N, kid):
+    """
+
+    evaluate the exact Hartree-Fock exchange energy, according to
+
+        Ex = - 2 pi / Omega sum_{mn in occ} sum_{g} |Cmn(g)|^2 / |g|^2
+
+    where
+
+        Cmn(g) = FT[ phi_m(r) phi_n*(r) ]
+
+    see JCP 108, 4697 (1998) for more details.
+
+    :param basis: plane wave basis information
+    :param C: molecular orbital coefficients
+    :param N: the number of electrons
+    :param kid: index for a given k-point
+
+    :return ex: the exact Hartree-Fock exchange energy
+
+    """
+
+    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    occupied_orbitals = []
+
+    # get occupied orbitals
+    for pp in range(N):
+
+        occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
+
+        for tt in range( basis.n_plane_waves_per_k[kid] ):
+
+            ik = basis.kg_to_g[kid][tt]
+            occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
+
+        occupied_orbitals.append( np.fft.fftn(occ) )
+
+    # accumulate exchange energy and matrix
+    exchange_energy = 0.0
+    exchange_matrix = np.zeros(len(basis.g), dtype = 'complex128')
+    Cmn = np.zeros(len(basis.g), dtype = 'complex128')
+    for m in range(N):
+        for n in range(N):
+
+            tmp = occupied_orbitals[m] * occupied_orbitals[n].conj()
+            tmp = np.fft.ifftn(tmp)
+            for myg in range( len(basis.g) ):
+                Cmn[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+            exchange_energy += np.sum( np.divide(np.absolute(Cmn)**2.0, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) )
+            exchange_matrix += np.divide( -2.0 * np.pi / basis.omega * Cmn, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+
+    exchange_energy *= -2.0 * np.pi / basis.omega
+
+    return exchange_energy, exchange_matrix
+
+
 def form_fock_matrix(basis, kid, v = None): 
     """
 
@@ -858,6 +916,8 @@ def pw_uks(cell, basis, xc = 'lda', guess_mix = True):
     else :
         v_ne = get_local_pseudopotential_gth(basis)
 
+    # madelung correction
+    #madelung = tools.pbc.madelung(cell, basis.kpts)
 
     # number of alpha and beta bands
     total_charge = 0
