@@ -1,19 +1,10 @@
 """
 
-Use PySCF infrastructure to perform SCF with plane wave basis
+plane wave scf
 
 """
 
-import warnings
 import numpy as np
-from pyscf.pbc import gto, scf
-
-import ase
-from ase.build import bulk
-
-from pyscf.pbc import gto as pbcgto
-import pyscf.pbc.tools.pyscf_ase as pyscf_ase
-
 import scipy
 
 from pw_pbc.diis import DIIS
@@ -22,6 +13,115 @@ from pw_pbc.pseudopotential import get_local_pseudopotential_gth
 from pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
 
 from pw_pbc.basis import get_miller_indices
+
+from pyscf.pbc import tools
+
+def get_exact_exchange_energy(basis, occupied_orbitals, N):
+    """
+
+    evaluate the exact Hartree-Fock exchange energy, according to
+
+        Ex = - 2 pi / Omega sum_{mn in occ} sum_{g} |Cmn(g)|^2 / |g|^2
+
+    where
+
+        Cmn(g) = FT[ phi_m(r) phi_n*(r) ]
+
+    see JCP 108, 4697 (1998) for more details.
+
+    :param basis: plane wave basis information
+    :param occupied_orbitals: a list of occupied orbitals
+    :param N: the number of electrons
+
+    :return exchange_energy: the exact Hartree-Fock exchange energy
+    :return exchange_potential: the exact Hartree-Fock exchange potential
+
+    """
+
+    # accumulate exchange energy and matrix
+    exchange_energy = 0.0
+    exchange_matrix = np.zeros(len(basis.g), dtype = 'complex128')
+    Cmn = np.zeros(len(basis.g), dtype = 'complex128')
+    for m in range(N):
+        for n in range(N):
+
+            tmp = occupied_orbitals[m].conj() * occupied_orbitals[n]
+            tmp = np.fft.ifftn(tmp)
+            for myg in range( len(basis.g) ):
+                Cmn[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+            exchange_energy += np.sum( np.divide(np.absolute(Cmn)**2.0, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) )
+            exchange_matrix += np.divide( -4.0 * np.pi / basis.omega * Cmn, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+
+    return -2.0 * np.pi / basis.omega * exchange_energy, exchange_matrix
+
+def get_xc_potential(xc, basis, rho, occupied_orbitals, N):
+    """
+
+    evaluate the exchange-correlation energy
+
+    :param xc: the exchange-correlation functional name
+    :param basis: plane wave basis information
+    :param rho: the alpha or beta spin density (real space)
+    :param occupied_orbitals: list of occupied orbitals (real space)
+    :param N: the number of electrons
+    :return xc_potential: the exchange-correlation energy
+
+    """
+
+    v_xc = np.zeros(len(basis.g), dtype = 'complex128')
+
+    if xc == 'lda' :
+
+        # LSDA potential
+        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
+        vr = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho , 1.0 / 3.0 )
+
+        tmp = np.fft.ifftn(vr)
+        for myg in range( len(basis.g) ):
+            v_xc[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+    elif xc == 'hf' :
+
+        # TODO: fix for general k
+        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N)
+
+    else:
+        raise Exception("unsupported xc functional")
+
+    return v_xc
+
+def get_xc_energy(xc, basis, rho, occupied_orbitals, N):
+    """
+
+    evaluate the exchange-correlation energy
+
+    :param xc: the exchange-correlation functional name
+    :param basis: plane wave basis information
+    :param rho: the alpha or beta spin density (real space)
+    :param occupied_orbitals: list of occupied orbitals (real space)
+    :param N: the number of electrons
+    :return xc_potential: the exchange-correlation energy
+
+    """
+
+    xc_energy = 0.0
+
+    if xc == 'lda' :
+
+        # LSDA XC energy
+        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
+        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(rho, 4.0/3.0))
+
+    elif xc == 'hf' :
+
+        # TODO: fix for general k
+        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N)
+
+    else:
+        raise Exception("unsupported xc functional")
+
+    return xc_energy
 
 def get_matrix_elements(basis, kid, vg):
 
@@ -92,49 +192,8 @@ def get_density(basis, C, N, kid):
 
     """
 
-    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    for pp in range(N):
-
-        occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
-
-        for tt in range( basis.n_plane_waves_per_k[kid] ):
-
-            ik = basis.kg_to_g[kid][tt]
-            occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
-
-        occ = ( 1.0 / np.sqrt(basis.omega) ) * np.fft.fftn(occ)
-
-        rho += np.absolute(occ)**2.0
-
-    return ( 1.0 / len(basis.kpts) ) * rho
-
-def get_exact_exchange_energy(basis, C, N, kid):
-    """
-
-    evaluate the exact Hartree-Fock exchange energy, according to
-
-        Ex = - 2 pi / Omega sum_{mn in occ} sum_{g} |Cmn(g)|^2 / |g|^2
-
-    where
-
-        Cmn(g) = FT[ phi_m(r) phi_n*(r) ]
-
-    see JCP 108, 4697 (1998) for more details.
-
-    :param basis: plane wave basis information
-    :param C: molecular orbital coefficients
-    :param N: the number of electrons
-    :param kid: index for a given k-point
-
-    :return ex: the exact Hartree-Fock exchange energy
-
-    """
-
-    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-
     occupied_orbitals = []
-
-    # get occupied orbitals
+    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     for pp in range(N):
 
         occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
@@ -144,27 +203,12 @@ def get_exact_exchange_energy(basis, C, N, kid):
             ik = basis.kg_to_g[kid][tt]
             occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
 
-        occupied_orbitals.append( np.fft.fftn(occ) )
+        occ = np.fft.fftn(occ) 
+        occupied_orbitals.append( occ )
 
-    # accumulate exchange energy and matrix
-    exchange_energy = 0.0
-    exchange_matrix = np.zeros(len(basis.g), dtype = 'complex128')
-    Cmn = np.zeros(len(basis.g), dtype = 'complex128')
-    for m in range(N):
-        for n in range(N):
+        rho += np.absolute(occ)**2.0 / basis.omega
 
-            tmp = occupied_orbitals[m] * occupied_orbitals[n].conj()
-            tmp = np.fft.ifftn(tmp)
-            for myg in range( len(basis.g) ):
-                Cmn[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-            exchange_energy += np.sum( np.divide(np.absolute(Cmn)**2.0, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) )
-            exchange_matrix += np.divide( -2.0 * np.pi / basis.omega * Cmn, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
-
-    exchange_energy *= -2.0 * np.pi / basis.omega
-
-    return exchange_energy, exchange_matrix
-
+    return ( 1.0 / len(basis.kpts) ) * rho, occupied_orbitals
 
 def form_fock_matrix(basis, kid, v = None): 
     """
@@ -288,8 +332,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     print('    ************************************************')
     print('')
 
-    if xc != 'lda':
-        raise Exception("uks only supports xc = 'lda' for now")
+    if xc != 'lda' and xc != 'hf':
+        raise Exception("uks only supports xc = 'lda' and 'hf' for now")
 
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
@@ -325,7 +369,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         v_ne = get_local_pseudopotential_gth(basis)
 
     # madelung correction
-    #madelung = tools.pbc.madelung(cell, basis.kpts)
+    madelung = tools.pbc.madelung(cell, basis.kpts)
 
     # number of alpha and beta bands
     total_charge = 0
@@ -369,11 +413,15 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
     scf_iter = 0
 
+
     # begin UKS iterations
     for i in range(0, maxiter):
 
-        new_rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+        new_rho_alpha = np.zeros(basis.real_space_grid_dim, dtype= 'float64')
         new_rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+        occ_alpha = []
+        occ_beta = []
 
         one_electron_energy = 0.0
         coulomb_energy = 0.0
@@ -394,6 +442,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             if scf_iter == 0 and guess_mix == True :
                 n = nalpha
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,n))
+            print(epsilon_alpha - madelung)
             
             # break spin symmetry?
             if guess_mix is True and scf_iter == 0:
@@ -418,7 +467,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             coulomb_energy += get_coulomb_energy(basis, Calpha, nalpha, kid, v_coulomb)
 
             # accumulate density 
-            new_rho_alpha += get_density(basis, Calpha, nalpha, kid)
+            rho, occ_alpha = get_density(basis, Calpha, nalpha, kid)
+            new_rho_alpha += rho
 
             # now beta
             if nbeta == 0 : 
@@ -441,12 +491,15 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             coulomb_energy += get_coulomb_energy(basis, Cbeta, nbeta, kid, v_coulomb)
 
             # accumulate density 
-            new_rho_beta += get_density(basis, Cbeta, nbeta, kid)
+            rho, occ_beta = get_density(basis, Cbeta, nbeta, kid)
+            new_rho_beta += rho
 
-        # LSDA XC energy
-        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 ) 
-        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_alpha, 4.0/3.0))
-        xc_energy += cx * 2.0 ** ( 1.0 / 3.0 ) * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(new_rho_beta, 4.0/3.0))
+        xc_energy = get_xc_energy(xc, basis, new_rho_alpha, occ_alpha, nalpha)
+        if nbeta > 0:
+            xc_energy += get_xc_energy(xc, basis, new_rho_beta, occ_beta, nbeta)
+
+        if xc == 'hf':
+            xc_energy -= 0.5 * (nalpha + nbeta) * madelung
 
         # damp density
         factor = 1.0
@@ -484,20 +537,14 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
         v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
 
-        # LSDA potential
-        vr_alpha = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho_alpha , 1.0 / 3.0 )
-        vr_beta  = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho_beta , 1.0 / 3.0 )
+        # exchange-correlation potential
+        v_xc_alpha = get_xc_potential(xc, basis, rho_alpha, occ_alpha, nalpha)
 
-        tmp = np.fft.ifftn(vr_alpha)
-        for myg in range( len(basis.g) ):
-            v_xc_alpha[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-        tmp = np.fft.ifftn(vr_beta)
-        for myg in range( len(basis.g) ):
-            v_xc_beta[myg] = tmp[ get_miller_indices(myg, basis) ]
+        if nbeta > 0:
+            v_xc_beta = get_xc_potential(xc, basis, rho_beta, occ_beta, nbeta)
 
         # total energy
-        new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc
+        new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
 
         # convergence in energy
         energy_diff = np.abs(new_total_energy - old_total_energy)
@@ -529,10 +576,10 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
     print('    one-electron energy:      %20.12lf' % ( np.real(one_electron_energy) ) )
     print('    coulomb energy:           %20.12lf' % ( np.real(coulomb_energy) ) )
-    print('    xc energy:                %20.12lf' % ( xc_energy ) )
+    print('    xc energy:                %20.12lf' % ( np.real(xc_energy) ) )
     print('')
-    print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc ) )
+    print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
     print('')
 
-    assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + xc_energy + enuc, -9.802901383306) )
+    assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
 
