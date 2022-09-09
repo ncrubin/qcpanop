@@ -38,22 +38,32 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N):
 
     """
 
+
     # accumulate exchange energy and matrix
     exchange_energy = 0.0
     exchange_matrix = np.zeros(len(basis.g), dtype = 'complex128')
     Cmn = np.zeros(len(basis.g), dtype = 'complex128')
-    for m in range(N):
-        for n in range(N):
+    for m in range(0, N):
+        for n in range(0, N):
 
-            tmp = occupied_orbitals[m].conj() * occupied_orbitals[n]
+            tmp = occupied_orbitals[m] * occupied_orbitals[n].conj()
             tmp = np.fft.ifftn(tmp)
             for myg in range( len(basis.g) ):
                 Cmn[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-            exchange_energy += np.sum( np.divide(np.absolute(Cmn)**2.0, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) )
-            exchange_matrix += np.divide( -4.0 * np.pi / basis.omega * Cmn, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+            # hmn(g)
+            tmp = np.divide(Cmn, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-    return -2.0 * np.pi / basis.omega * exchange_energy, exchange_matrix
+            exchange_energy += np.sum( Cmn.conj() * tmp )
+
+            # hmn(r) 
+            #tmp = np.fft.fftn(tmp) 
+            # hmn(g) 
+            #tmp = np.fft.ifftn(tmp) 
+
+            exchange_matrix += tmp
+
+    return -2.0 * np.pi / basis.omega * exchange_energy, -4.0 * np.pi / basis.omega * exchange_matrix
 
 def get_xc_potential(xc, basis, rho, occupied_orbitals, N):
     """
@@ -442,7 +452,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             if scf_iter == 0 and guess_mix == True :
                 n = nalpha
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock, lower = False, eigvals=(0,n))
-            print(epsilon_alpha - madelung)
+            #print(epsilon_alpha - madelung)
             
             # break spin symmetry?
             if guess_mix is True and scf_iter == 0:

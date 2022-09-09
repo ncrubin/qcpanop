@@ -142,14 +142,18 @@ def get_local_pseudopotential_gth(basis, tiny = 1e-8):
 
         rloc2 = rloc * rloc
         rloc3 = rloc * rloc2
+
+        k2 = my_g2 * rloc2
+        k4 = k2 * k2
+        k6 = k2 * k4
+
         rloc4 = rloc2 * rloc2
         rloc6 = rloc2 * rloc4
 
-        g4 = my_g2 * my_g2
-        g6 = my_g2 * g4
+        vsgl = SI_large * np.exp(-k2/2.0) * (-4.0 * np.pi * Zion / my_g2 + np.sqrt(8.0 * np.pi**3.0) * rloc3 * (c1 + c2 * (3.0 - k2) + c3 * (15.0 - 10.0 * k2 + k4) + c4 * (105.0 - 105.0 * k2 + 21.0 * k4 - k6) ) )
 
-        vsgl = SI_large * np.exp(-my_g2*rloc2/2.)*(-4.*np.pi*Zion/my_g2+np.sqrt(8.*np.pi**3.)*rloc3*(c1+c2*(3.-my_g2*rloc2)+c3*(15.-10.*my_g2*rloc2+g4*rloc4)+c4*(105.-105.*my_g2*rloc2+21.*g4*rloc4-g6*rloc6)))
-        vsgs = SI_small * 2.*np.pi*rloc2*((c1+3.*(c2+5.*(c3+7.*c4)))*np.sqrt(2.*np.pi)*rloc+Zion) #|G|^2->0 limit 
+        #|G|^2->0 limit 
+        vsgs = SI_small * 2.0 * np.pi * rloc2 * ( (c1 + 3.0 * (c2 + 5.0 * (c3 + 7.0 * c4) ) ) * np.sqrt(2.0 * np.pi) * rloc + Zion) 
 
         vsg[largeind] += vsgl
         vsg[smallind] += vsgs
