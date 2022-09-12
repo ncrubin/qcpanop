@@ -16,7 +16,7 @@ from pw_pbc.basis import get_miller_indices
 
 from pyscf.pbc import tools
 
-def get_exact_exchange_energy(basis, occupied_orbitals, N):
+def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
     """
 
     evaluate the exact Hartree-Fock exchange energy, according to
@@ -32,6 +32,7 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N):
     :param basis: plane wave basis information
     :param occupied_orbitals: a list of occupied orbitals
     :param N: the number of electrons
+    :param N: the MO transformation matrix
 
     :return exchange_energy: the exact Hartree-Fock exchange energy
     :return exchange_potential: the exact Hartree-Fock exchange potential
@@ -41,31 +42,104 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N):
 
     # accumulate exchange energy and matrix
     exchange_energy = 0.0
-    exchange_matrix = np.zeros(len(basis.g), dtype = 'complex128')
-    Cmn = np.zeros(len(basis.g), dtype = 'complex128')
-    for m in range(0, N):
-        for n in range(0, N):
 
-            tmp = occupied_orbitals[m] * occupied_orbitals[n].conj()
+    Cij = np.zeros(len(basis.g), dtype = 'complex128')
+
+    mat = np.zeros((N,N), dtype = 'complex128')
+
+    for i in range(0, N):
+
+        # Ki(r) = sum_j Kij(r) phi_j(r)
+        Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+
+        for j in range(0, N):
+
+            # Cij(r') = phi_i(r') phi_j*(r')
+            tmp = occupied_orbitals[j].conj() * occupied_orbitals[i]
+
+            # Cij(g) = FFT[Cij(r')]
             tmp = np.fft.ifftn(tmp)
             for myg in range( len(basis.g) ):
-                Cmn[myg] = tmp[ get_miller_indices(myg, basis) ]
+                Cij[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-            # hmn(g)
-            tmp = np.divide(Cmn, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+            # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+            Kij = np.divide(Cij, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-            exchange_energy += np.sum( Cmn.conj() * tmp )
+            exchange_energy += np.sum( Cij.conj() * Kij )
 
-            # hmn(r) 
-            #tmp = np.fft.fftn(tmp) 
-            # hmn(g) 
-            #tmp = np.fft.ifftn(tmp) 
+    #        # Kij(r) = FFT^-1[Kij(g)]
+    #        Kij_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    #        for myg in range( len(basis.g) ):
+    #            Kij_r[ get_miller_indices(myg, basis) ] = Kij[myg]
+    #        Kij_r = np.fft.fftn(Kij_r)
 
-            exchange_matrix += tmp
+    #        # action of K on an occupied orbital, i: 
+    #        # Ki(r) = sum_j Kij(r) phi_j(r)
+    #        Ki_r += Kij_r * occupied_orbitals[j]
+
+    #    # build exchange matrix in MO basis <phi_k | K | phi_i>
+    #    factor = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
+    #    for k in range(0, N):
+    #        mat[k, i] = factor * np.sum( Ki_r * occupied_orbitals[k].conj() ) 
+
+    ## transform exchange matrix back from MO basis
+    #trans = np.zeros((basis.n_plane_waves_per_k[0], N), dtype = 'complex128')
+    #for i in range(0, N):
+    #    trans[:, i] = C[:, i]
+    #    
+    #exchange_matrix = np.einsum('pi,ij,qj->pq', trans.conj(), mat, trans)
+
+
+    # try new way ...
+    exchange_matrix = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+
+    for i in range(0, basis.n_plane_waves_per_k[0]):
+        ii = basis.kg_to_g[0][i]
+
+        # Ki(r) = sum_j Kij(r) phi_j(r)
+        Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+
+        # a planewave basis function
+        phi_i = np.zeros(len(basis.g), dtype = 'complex128')
+        phi_i[ii] = 1.0
+        tmp = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+        for myg in range( len(basis.g) ):
+            tmp[ get_miller_indices(myg, basis) ] = phi_i[myg]
+        phi_i = np.fft.fftn(tmp)
+
+        for j in range(0, N):
+
+            # Cij(r') = phi_i(r') phi_j*(r')
+            tmp = occupied_orbitals[j].conj() * phi_i #occupied_orbitals[i]
+
+            # Cij(g) = FFT[Cij(r')]
+            tmp = np.fft.ifftn(tmp)
+            for myg in range( len(basis.g) ):
+                Cij[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+            # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+            Kij = np.divide(Cij, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+
+            # Kij(r) = FFT^-1[Kij(g)]
+            Kij_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+            for myg in range( len(basis.g) ):
+                Kij_r[ get_miller_indices(myg, basis) ] = Kij[myg]
+            Kij_r = np.fft.fftn(Kij_r)
+
+            # action of K on an occupied orbital, i: 
+            # Ki(r) = sum_j Kij(r) phi_j(r)
+            Ki_r += Kij_r * occupied_orbitals[j]
+
+        # build a row of the exchange matrix: < G' | K | G''> = FFT( Ki_r )
+        row_g = np.fft.ifftn(Ki_r)
+        for k in range(0, basis.n_plane_waves_per_k[0]):
+            kk = basis.kg_to_g[0][k]
+            
+            exchange_matrix[k, i] = row_g[ get_miller_indices(kk, basis) ] 
 
     return -2.0 * np.pi / basis.omega * exchange_energy, -4.0 * np.pi / basis.omega * exchange_matrix
 
-def get_xc_potential(xc, basis, rho, occupied_orbitals, N):
+def get_xc_potential(xc, basis, rho, occupied_orbitals, N, C):
     """
 
     evaluate the exchange-correlation energy
@@ -75,6 +149,7 @@ def get_xc_potential(xc, basis, rho, occupied_orbitals, N):
     :param rho: the alpha or beta spin density (real space)
     :param occupied_orbitals: list of occupied orbitals (real space)
     :param N: the number of electrons
+    :param C: the MO transformation matrix
     :return xc_potential: the exchange-correlation energy
 
     """
@@ -94,14 +169,14 @@ def get_xc_potential(xc, basis, rho, occupied_orbitals, N):
     elif xc == 'hf' :
 
         # TODO: fix for general k
-        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N)
+        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
 
     else:
         raise Exception("unsupported xc functional")
 
     return v_xc
 
-def get_xc_energy(xc, basis, rho, occupied_orbitals, N):
+def get_xc_energy(xc, basis, rho, occupied_orbitals, N, C):
     """
 
     evaluate the exchange-correlation energy
@@ -111,6 +186,7 @@ def get_xc_energy(xc, basis, rho, occupied_orbitals, N):
     :param rho: the alpha or beta spin density (real space)
     :param occupied_orbitals: list of occupied orbitals (real space)
     :param N: the number of electrons
+    :param C: the MO transformation matrix
     :return xc_potential: the exchange-correlation energy
 
     """
@@ -126,7 +202,7 @@ def get_xc_energy(xc, basis, rho, occupied_orbitals, N):
     elif xc == 'hf' :
 
         # TODO: fix for general k
-        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N)
+        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
 
     else:
         raise Exception("unsupported xc functional")
@@ -353,6 +429,9 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
     v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
 
+    exchange_matrix_alpha = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+    exchange_matrix_beta = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+
     # maximum number of iterations
     maxiter = 100
 
@@ -436,8 +515,17 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         one_electron_energy = 0.0
         coulomb_energy = 0.0
 
-        va = v_coulomb + v_xc_alpha + v_ne
-        vb = v_coulomb + v_xc_beta + v_ne
+        if xc == 'lda' :
+            va = v_coulomb + v_ne + v_xc_alpha
+            vb = v_coulomb + v_ne + v_xc_beta
+        elif xc == 'hf' :
+            va = v_coulomb + v_ne 
+            vb = v_coulomb + v_ne 
+        else:
+            raise Exception("unsupported xc functional")
+
+        Calpha = np.eye(basis.n_plane_waves_per_k[0])
+        Cbeta = np.eye(basis.n_plane_waves_per_k[0])
 
         # loop over k-points
         for kid in range( len(basis.kpts) ):
@@ -446,6 +534,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
             # form fock matrix
             fock = form_fock_matrix(basis, kid, v = va)
+            if xc == 'hf' :
+                fock += exchange_matrix_alpha
 
             # diagonalize fock matrix
             n = nalpha - 1
@@ -486,6 +576,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
             # form fock matrix
             fock = form_fock_matrix(basis, kid, v = vb)
+            if xc == 'hf' :
+                fock += exchange_matrix_beta
 
             # diagonalize fock matrix
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
@@ -504,9 +596,9 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             rho, occ_beta = get_density(basis, Cbeta, nbeta, kid)
             new_rho_beta += rho
 
-        xc_energy = get_xc_energy(xc, basis, new_rho_alpha, occ_alpha, nalpha)
+        xc_energy = get_xc_energy(xc, basis, new_rho_alpha, occ_alpha, nalpha, Calpha)
         if nbeta > 0:
-            xc_energy += get_xc_energy(xc, basis, new_rho_beta, occ_beta, nbeta)
+            xc_energy += get_xc_energy(xc, basis, new_rho_beta, occ_beta, nbeta, Cbeta)
 
         if xc == 'hf':
             xc_energy -= 0.5 * (nalpha + nbeta) * madelung
@@ -548,10 +640,19 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
 
         # exchange-correlation potential
-        v_xc_alpha = get_xc_potential(xc, basis, rho_alpha, occ_alpha, nalpha)
+        if xc == 'lda' :
+            v_xc_alpha = get_xc_potential(xc, basis, rho_alpha, occ_alpha, nalpha, Calpha)
 
-        if nbeta > 0:
-            v_xc_beta = get_xc_potential(xc, basis, rho_beta, occ_beta, nbeta)
+            if nbeta > 0:
+                v_xc_beta = get_xc_potential(xc, basis, rho_beta, occ_beta, nbeta, Cbeta)
+        elif xc == 'hf' :
+
+            dum, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+            if nbeta > 0:
+                dum, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+
+        else:
+            raise Exception("unsupported xc functional")
 
         # total energy
         new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
