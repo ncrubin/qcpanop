@@ -4,6 +4,12 @@ plane wave scf
 
 """
 
+# libxc
+import pylibxc
+
+# TODO: this thing shouldn't be global, and i should be able to select the functional
+libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
+
 import numpy as np
 import scipy
 
@@ -139,70 +145,110 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
 
     return -2.0 * np.pi / basis.omega * exchange_energy, -4.0 * np.pi / basis.omega * exchange_matrix
 
-def get_xc_potential(xc, basis, rho, occupied_orbitals, N, C):
+def get_xc_potential(xc, basis, rho_alpha, rho_beta):
     """
 
     evaluate the exchange-correlation energy
 
     :param xc: the exchange-correlation functional name
     :param basis: plane wave basis information
-    :param rho: the alpha or beta spin density (real space)
-    :param occupied_orbitals: list of occupied orbitals (real space)
-    :param N: the number of electrons
-    :param C: the MO transformation matrix
-    :return xc_potential: the exchange-correlation energy
+    :param rho_alpha: the alpha spin density (real space)
+    :param rho_beta: the beta spin density (real space)
+    :return xc_alpha: the exchange-correlation energy (alpha)
+    :return xc_beta: the exchange-correlation energy (beta)
 
     """
 
-    v_xc = np.zeros(len(basis.g), dtype = 'complex128')
+
+    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
 
     if xc == 'lda' :
 
-        # LSDA potential
-        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
-        vr = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho , 1.0 / 3.0 )
+        ## LSDA potential 
+        #cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
+        #vr = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho , 1.0 / 3.0 )
 
-        tmp = np.fft.ifftn(vr)
+        #tmp = np.fft.ifftn(vr)
+        #for myg in range( len(basis.g) ):
+        #    v_xc[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+        # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
+        combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+                    combined_rho[count] = rho_alpha[i, j, k]
+                    combined_rho[count + 1] = rho_beta[i, j, k]
+                    count = count + 2
+
+        # compute
+        ret = libxc_functional.compute( combined_rho )
+
+        # unpack v_xc(r) and fourier transform
+        vrho = ret['vrho']
+        tmp_alpha = np.zeros_like(rho_alpha)
+        tmp_beta = np.zeros_like(rho_beta)
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+                    tmp_alpha[i, j, k] = vrho[count, 0]
+                    tmp_beta[i, j, k] = vrho[count, 1]
+                    count = count + 1
+
+        tmp_alpha = np.fft.ifftn(tmp_alpha)
+        tmp_beta = np.fft.ifftn(tmp_beta)
+
+        # unpack v_xc(g) 
         for myg in range( len(basis.g) ):
-            v_xc[myg] = tmp[ get_miller_indices(myg, basis) ]
+            v_xc_alpha[myg] = tmp_alpha[ get_miller_indices(myg, basis) ]
+            v_xc_beta[myg] = tmp_beta[ get_miller_indices(myg, basis) ]
 
     elif xc == 'hf' :
 
+        pass
+
         # TODO: fix for general k
-        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
+        #xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
 
     else:
         raise Exception("unsupported xc functional")
 
-    return v_xc
+    return v_xc_alpha, v_xc_beta
 
-def get_xc_energy(xc, basis, rho, occupied_orbitals, N, C):
+def get_xc_energy(xc, basis, rho_alpha, rho_beta): 
     """
 
     evaluate the exchange-correlation energy
 
     :param xc: the exchange-correlation functional name
     :param basis: plane wave basis information
-    :param rho: the alpha or beta spin density (real space)
-    :param occupied_orbitals: list of occupied orbitals (real space)
-    :param N: the number of electrons
-    :param C: the MO transformation matrix
-    :return xc_potential: the exchange-correlation energy
+    :param rho_alpha: the alpha spin density (real space)
+    :param rho_beta: the beta spin density (real space)
 
     """
 
     xc_energy = 0.0
 
-    if xc == 'lda' :
+    if xc == 'lda':
 
-        # LSDA XC energy
-        cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
-        xc_energy = cx * 2.0 ** ( 1.0 / 3.0 ) * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.power(rho, 4.0/3.0))
+        # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
+        combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+                    combined_rho[count] = rho_alpha[i, j, k]
+                    combined_rho[count + 1] = rho_beta[i, j, k]
+                    count = count + 2
 
-    elif xc == 'hf' :
-
-        # TODO: fix for general k
-        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
+        # compute
+        ret = libxc_functional.compute( combined_rho , do_vxc = False)
+        zk = ret['zk']
+        val = (rho_alpha.flatten() + rho_beta.flatten() ) * zk.flatten()
+        xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
 
     else:
         raise Exception("unsupported xc functional")
@@ -421,6 +467,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     if xc != 'lda' and xc != 'hf':
         raise Exception("uks only supports xc = 'lda' and 'hf' for now")
 
+
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
 
@@ -596,11 +643,19 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             rho, occ_beta = get_density(basis, Cbeta, nbeta, kid)
             new_rho_beta += rho
 
-        xc_energy = get_xc_energy(xc, basis, new_rho_alpha, occ_alpha, nalpha, Calpha)
-        if nbeta > 0:
-            xc_energy += get_xc_energy(xc, basis, new_rho_beta, occ_beta, nbeta, Cbeta)
+
+        if xc == 'lda':
+
+            xc_energy = get_xc_energy(xc, basis, new_rho_alpha, new_rho_beta)
 
         if xc == 'hf':
+
+            # TODO: fix for general k
+            xc_energy, v_xc = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+            if nbeta > 0:
+                my_xc_energy, v_xc = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+                xc_energy += my_xc_energy
+
             xc_energy -= 0.5 * (nalpha + nbeta) * madelung
 
         # damp density
@@ -641,10 +696,9 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
         # exchange-correlation potential
         if xc == 'lda' :
-            v_xc_alpha = get_xc_potential(xc, basis, rho_alpha, occ_alpha, nalpha, Calpha)
 
-            if nbeta > 0:
-                v_xc_beta = get_xc_potential(xc, basis, rho_beta, occ_beta, nbeta, Cbeta)
+            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta)
+
         elif xc == 'hf' :
 
             dum, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
