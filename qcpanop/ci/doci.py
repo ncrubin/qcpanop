@@ -8,7 +8,7 @@ import numpy as np
 
 from pyscf import gto, scf, ao2mo, fci, mcscf
 
-from qcpanop.ci.pyscf_ci_to_fqe_ci import pyscf_to_fqe_wf
+from qcpanop.ci.utils import pyscf_to_fqe_wf
 
 import fqe
 from fqe.openfermion_utils import integrals_to_fqe_restricted
