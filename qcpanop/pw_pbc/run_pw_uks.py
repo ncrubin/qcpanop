@@ -1,6 +1,6 @@
 
-from pw_pbc.basis import plane_wave_basis
-from pw_pbc.scf import uks
+from qcpanop.pw_pbc.basis import plane_wave_basis
+from qcpanop.pw_pbc.scf import uks
 
 from pyscf import dft, scf, pbc
 from pyscf.pbc import gto, scf

@@ -6,7 +6,7 @@ plane wave basis information
 
 import numpy as np
 
-from pw_pbc.pseudopotential import get_gth_pseudopotential_parameters
+from qcpanop.pw_pbc.pseudopotential import get_gth_pseudopotential_parameters
 
 def factor_integer(n):
 
