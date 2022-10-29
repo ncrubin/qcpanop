@@ -1,7 +1,6 @@
-import numpy as np
 
-from pw_scf import plane_wave_basis
-from pw_scf import pw_uks
+from pw_pbc.basis import plane_wave_basis
+from pw_pbc.scf import uks
 
 from pyscf import dft, scf, pbc
 from pyscf.pbc import gto, scf
@@ -16,7 +15,7 @@ def main():
     # define unit cell 
     
     #a = np.eye(3) * 4.0
-    #atom = 'Ne 0 0 1.0'
+    #atom = 'He 0 0 0'
 
     #ase_atom = bulk('Si', 'diamond', a = 10.26)
     ase_atom = bulk('C', 'diamond', a = 6.74)
@@ -29,7 +28,7 @@ def main():
     cell = gto.M(a = a,
                  atom = atom,
                  unit = 'bohr',
-                 basis = 'gth-dzv', #'cc-pvqz',
+                 basis = 'cc-pvqz',
                  pseudo = 'gth-blyp',
                  verbose = 100,
                  ke_cutoff = 5000 / 27.21138602,
@@ -48,13 +47,13 @@ def main():
 
     # run pyscf dft
     from pyscf import dft, scf, pbc
-    #kmf = pbc.scf.KUHF(cell, kpts = k).run()
+    #kmf = pbc.scf.KUHF(cell, kpts = basis.kpts).run()
     #kmf = pbc.scf.KUKS(cell,xc='lda,', kpts = basis.kpts).run()
     #exit()
 
    
     # run plane wave scf 
-    pw_uks(cell, basis, xc = 'lda', guess_mix = True)
+    uks(cell, basis, xc = 'lda', guess_mix = True)
 
 if __name__ == "__main__":
     main()
