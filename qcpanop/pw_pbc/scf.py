@@ -13,12 +13,12 @@ libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
 import numpy as np
 import scipy
 
-from pw_pbc.diis import DIIS
+from qcpanop.pw_pbc.diis import DIIS
 
-from pw_pbc.pseudopotential import get_local_pseudopotential_gth
-from pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
+from qcpanop.pw_pbc.pseudopotential import get_local_pseudopotential_gth
+from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
 
-from pw_pbc.basis import get_miller_indices
+from qcpanop.pw_pbc.basis import get_miller_indices
 
 from pyscf.pbc import tools
 
