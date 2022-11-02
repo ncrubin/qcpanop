@@ -14,7 +14,6 @@ import numpy as np
 import scipy
 
 from qcpanop.pw_pbc.diis import DIIS
-
 from qcpanop.pw_pbc.pseudopotential import get_local_pseudopotential_gth
 from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
 
@@ -174,30 +173,17 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
         #    v_xc[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
-        combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-                    combined_rho[count] = rho_alpha[i, j, k]
-                    combined_rho[count + 1] = rho_beta[i, j, k]
-                    count = count + 2
+        combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
+        combined_rho[::2] = rho_alpha.ravel(order='C')
+        combined_rho[1::2] = rho_beta.ravel(order='C')
 
         # compute
         ret = libxc_functional.compute( combined_rho )
 
         # unpack v_xc(r) and fourier transform
         vrho = ret['vrho']
-        tmp_alpha = np.zeros_like(rho_alpha)
-        tmp_beta = np.zeros_like(rho_beta)
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-                    tmp_alpha[i, j, k] = vrho[count, 0]
-                    tmp_beta[i, j, k] = vrho[count, 1]
-                    count = count + 1
-
+        tmp_alpha = vrho[:, 0].reshape(basis.real_space_grid_dim)
+        tmp_beta = vrho[:, 1].reshape(basis.real_space_grid_dim)
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
 
@@ -235,14 +221,9 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
     if xc == 'lda':
 
         # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
-        combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-                    combined_rho[count] = rho_alpha[i, j, k]
-                    combined_rho[count + 1] = rho_beta[i, j, k]
-                    count = count + 2
+        combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
+        combined_rho[::2] = rho_alpha.ravel(order='C')
+        combined_rho[1::2] = rho_beta.ravel(order='C')
 
         # compute
         ret = libxc_functional.compute( combined_rho , do_vxc = False)
@@ -254,6 +235,7 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
         raise Exception("unsupported xc functional")
 
     return xc_energy
+
 
 def get_matrix_elements(basis, kid, vg):
 
@@ -436,7 +418,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     for pp in range(basis.n_plane_waves_per_k[kid]):
         oei[pp][pp] *= 0.5
 
-    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
+    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C, optimize=True)
 
     coulomb_energy = 0.0
     for pp in range(N):
@@ -571,8 +553,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         else:
             raise Exception("unsupported xc functional")
 
-        Calpha = np.eye(basis.n_plane_waves_per_k[0])
-        Cbeta = np.eye(basis.n_plane_waves_per_k[0])
+        Calpha = np.eye(basis.n_plane_waves_per_k[0], dtype=np.complex128)
+        Cbeta = np.eye(basis.n_plane_waves_per_k[0], dtype=np.complex128)
 
         # loop over k-points
         for kid in range( len(basis.kpts) ):
@@ -627,7 +609,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
                 fock += exchange_matrix_beta
 
             # diagonalize fock matrix
-            epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, eigvals=(0,nbeta-1))
+            epsilon_beta, Cbeta = scipy.linalg.eigh(fock, lower = False, subset_by_index=(0,nbeta-1))
+
 
             # one-electron part of the energy 
             one_electron_energy += get_one_electron_energy(basis, 
