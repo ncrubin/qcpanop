@@ -86,7 +86,7 @@ def get_plane_wave_basis(ke_cutoff, a, b):
     real_space_grid_dim = [2 * reciprocal_max_dim[0] + 1, 2 * reciprocal_max_dim[1] + 1, 2 * reciprocal_max_dim[2] + 1]
 
     # miller_to_g maps the miller indices to the index of G
-    miller_to_g = np.ones(real_space_grid_dim, dtype = 'int') * 1000000
+    miller_to_g = np.ones(real_space_grid_dim, dtype = 'int')
     for i in range(len(g)):
         miller_to_g[miller[i, 0] + reciprocal_max_dim[0], miller[i, 1] + reciprocal_max_dim[1], miller[i, 2] + reciprocal_max_dim[2]] = i
 
@@ -220,7 +220,7 @@ def get_plane_waves_per_k(ke_cutoff, k, g):
                 n_plane_waves_per_k[i] += 1
 
     # kg_to_g maps basis for specific k-point to original plane wave basis
-    kg_to_g = np.ones((len(k), np.amax(n_plane_waves_per_k)), dtype = 'int') * 1000000
+    kg_to_g = np.ones((len(k), np.amax(n_plane_waves_per_k)), dtype = 'int')
 
     for i in range(len(k)):
         ind = 0
