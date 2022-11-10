@@ -8,7 +8,9 @@ plane wave scf
 import pylibxc
 
 # TODO: this thing shouldn't be global, and i should be able to select the functional
-libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
+#libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
+libxc_x_functional = pylibxc.LibXCFunctional("gga_x_pbe", "polarized")
+libxc_c_functional = pylibxc.LibXCFunctional("gga_c_pbe", "polarized")
 
 import numpy as np
 import scipy
@@ -183,11 +185,50 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     combined_rho[count + 1] = rho_beta[i, j, k]
                     count = count + 2
 
-        # compute
-        ret = libxc_functional.compute( combined_rho )
+        # contracted gradient: del rho . del rho
+        contracted_gradient = np.zeros( [3 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
+
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0)
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1)
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2)
+
+        drho_dx_beta = np.gradient(rho_beta, axis=0)
+        drho_dy_beta = np.gradient(rho_beta, axis=1)
+        drho_dz_beta = np.gradient(rho_beta, axis=2)
+
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+
+                    # aa
+                    contracted_gradient[count] = drho_dx_alpha[i, j, k] * drho_dx_alpha[i, j, k] \
+                                               + drho_dy_alpha[i, j, k] * drho_dy_alpha[i, j, k] \
+                                               + drho_dz_alpha[i, j, k] * drho_dz_alpha[i, j, k]
+                    # ab
+                    contracted_gradient[count+1] = drho_dx_alpha[i, j, k] * drho_dx_beta[i, j, k] \
+                                                 + drho_dy_alpha[i, j, k] * drho_dy_beta[i, j, k] \
+                                                 + drho_dz_alpha[i, j, k] * drho_dz_beta[i, j, k]
+                    # bb
+                    contracted_gradient[count+2] = drho_dx_beta[i, j, k] * drho_dx_beta[i, j, k] \
+                                                 + drho_dy_beta[i, j, k] * drho_dy_beta[i, j, k] \
+                                                 + drho_dz_beta[i, j, k] * drho_dz_beta[i, j, k]
+
+                    count = count + 3
+
+        inp = {
+            "rho" : combined_rho,
+            "sigma" : contracted_gradient,
+            "lapl" : None,
+            "tau" : None
+        }
+
+        # compute exchange functional
+        ret = libxc_x_functional.compute( inp )
 
         # unpack v_xc(r) and fourier transform
         vrho = ret['vrho']
+        vsigma = ret['vsigma']
         tmp_alpha = np.zeros_like(rho_alpha)
         tmp_beta = np.zeros_like(rho_beta)
         count = 0
@@ -197,6 +238,17 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     tmp_alpha[i, j, k] = vrho[count, 0]
                     tmp_beta[i, j, k] = vrho[count, 1]
                     count = count + 1
+        #count = 0
+        #for i in range (0, basis.real_space_grid_dim[0] ):
+        #    for j in range (0, basis.real_space_grid_dim[1] ):
+        #        for k in range (0, basis.real_space_grid_dim[2] ):
+        #            tmp_alpha[i, j, k] += vsigma[count, 0] # uu
+        #            tmp_alpha[i, j, k] += vsigma[count, 1] # ud
+        #            tmp_alpha[i, j, k] += vsigma[count, 1] # ud
+        #            tmp_beta[i, j, k] += vsigma[count, 1] # ud
+        #            tmp_beta[i, j, k] += vsigma[count, 2] # dd
+
+        #            count = count + 1
 
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
@@ -205,6 +257,41 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
         for myg in range( len(basis.g) ):
             v_xc_alpha[myg] = tmp_alpha[ get_miller_indices(myg, basis) ]
             v_xc_beta[myg] = tmp_beta[ get_miller_indices(myg, basis) ]
+
+        # compute correlaction functional
+        ret = libxc_c_functional.compute( inp )
+
+        # unpack v_xc(r) and fourier transform
+        vrho = ret['vrho']
+        vsigma = ret['vsigma']
+        tmp_alpha = np.zeros_like(rho_alpha)
+        tmp_beta = np.zeros_like(rho_beta)
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+                    tmp_alpha[i, j, k] = vrho[count, 0]
+                    tmp_beta[i, j, k] = vrho[count, 1]
+                    count = count + 1
+        #count = 0
+        #for i in range (0, basis.real_space_grid_dim[0] ):
+        #    for j in range (0, basis.real_space_grid_dim[1] ):
+        #        for k in range (0, basis.real_space_grid_dim[2] ):
+        #            tmp_alpha[i, j, k] += vsigma[count, 0] # uu
+        #            tmp_alpha[i, j, k] += vsigma[count, 1] # ud
+        #            tmp_beta[i, j, k] += vsigma[count, 1] # ud
+        #            tmp_beta[i, j, k] += vsigma[count, 2] # dd
+
+        #            count = count + 1
+
+
+        tmp_alpha = np.fft.ifftn(tmp_alpha)
+        tmp_beta = np.fft.ifftn(tmp_beta)
+
+        # unpack v_xc(g) 
+        for myg in range( len(basis.g) ):
+            v_xc_alpha[myg] += tmp_alpha[ get_miller_indices(myg, basis) ]
+            v_xc_beta[myg] += tmp_beta[ get_miller_indices(myg, basis) ]
 
     elif xc == 'hf' :
 
@@ -244,11 +331,55 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
                     combined_rho[count + 1] = rho_beta[i, j, k]
                     count = count + 2
 
-        # compute
-        ret = libxc_functional.compute( combined_rho , do_vxc = False)
+        # contracted gradient: del rho . del rho
+        contracted_gradient = np.zeros( [3 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
+
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0)
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1)
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2)
+
+        drho_dx_beta = np.gradient(rho_beta, axis=0)
+        drho_dy_beta = np.gradient(rho_beta, axis=1)
+        drho_dz_beta = np.gradient(rho_beta, axis=2)
+
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+
+                    # aa
+                    contracted_gradient[count] = drho_dx_alpha[i, j, k] * drho_dx_alpha[i, j, k] \
+                                               + drho_dy_alpha[i, j, k] * drho_dy_alpha[i, j, k] \
+                                               + drho_dz_alpha[i, j, k] * drho_dz_alpha[i, j, k]
+                    # ab
+                    contracted_gradient[count+1] = drho_dx_alpha[i, j, k] * drho_dx_beta[i, j, k] \
+                                                 + drho_dy_alpha[i, j, k] * drho_dy_beta[i, j, k] \
+                                                 + drho_dz_alpha[i, j, k] * drho_dz_beta[i, j, k]
+                    # bb
+                    contracted_gradient[count+2] = drho_dx_beta[i, j, k] * drho_dx_beta[i, j, k] \
+                                                 + drho_dy_beta[i, j, k] * drho_dy_beta[i, j, k] \
+                                                 + drho_dz_beta[i, j, k] * drho_dz_beta[i, j, k]
+
+                    count = count + 3
+
+        inp = {
+            "rho" : combined_rho,
+            "sigma" : contracted_gradient,
+            "lapl" : None,
+            "tau" : None
+        }
+
+        # evaluate exchange functional
+        ret = libxc_x_functional.compute( inp , do_vxc = False)
         zk = ret['zk']
         val = (rho_alpha.flatten() + rho_beta.flatten() ) * zk.flatten()
         xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
+
+        # evaluate correlation functional
+        ret = libxc_c_functional.compute( inp , do_vxc = False)
+        zk = ret['zk']
+        val = (rho_alpha.flatten() + rho_beta.flatten() ) * zk.flatten()
+        xc_energy += val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
 
     else:
         raise Exception("unsupported xc functional")
