@@ -228,7 +228,6 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
 
         # unpack v_xc(r) and fourier transform
         vrho = ret['vrho']
-        vsigma = ret['vsigma']
         tmp_alpha = np.zeros_like(rho_alpha)
         tmp_beta = np.zeros_like(rho_beta)
         count = 0
@@ -238,17 +237,6 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     tmp_alpha[i, j, k] = vrho[count, 0]
                     tmp_beta[i, j, k] = vrho[count, 1]
                     count = count + 1
-        #count = 0
-        #for i in range (0, basis.real_space_grid_dim[0] ):
-        #    for j in range (0, basis.real_space_grid_dim[1] ):
-        #        for k in range (0, basis.real_space_grid_dim[2] ):
-        #            tmp_alpha[i, j, k] += vsigma[count, 0] # uu
-        #            tmp_alpha[i, j, k] += vsigma[count, 1] # ud
-        #            tmp_alpha[i, j, k] += vsigma[count, 1] # ud
-        #            tmp_beta[i, j, k] += vsigma[count, 1] # ud
-        #            tmp_beta[i, j, k] += vsigma[count, 2] # dd
-
-        #            count = count + 1
 
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
@@ -263,7 +251,6 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
 
         # unpack v_xc(r) and fourier transform
         vrho = ret['vrho']
-        vsigma = ret['vsigma']
         tmp_alpha = np.zeros_like(rho_alpha)
         tmp_beta = np.zeros_like(rho_beta)
         count = 0
@@ -273,17 +260,6 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     tmp_alpha[i, j, k] = vrho[count, 0]
                     tmp_beta[i, j, k] = vrho[count, 1]
                     count = count + 1
-        #count = 0
-        #for i in range (0, basis.real_space_grid_dim[0] ):
-        #    for j in range (0, basis.real_space_grid_dim[1] ):
-        #        for k in range (0, basis.real_space_grid_dim[2] ):
-        #            tmp_alpha[i, j, k] += vsigma[count, 0] # uu
-        #            tmp_alpha[i, j, k] += vsigma[count, 1] # ud
-        #            tmp_beta[i, j, k] += vsigma[count, 1] # ud
-        #            tmp_beta[i, j, k] += vsigma[count, 2] # dd
-
-        #            count = count + 1
-
 
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
