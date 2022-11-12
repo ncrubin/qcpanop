@@ -188,23 +188,31 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
         drho_dy_beta = np.gradient(rho_beta, axis=1)
         drho_dz_beta = np.gradient(rho_beta, axis=2)
 
+        tmp_aa = drho_dx_alpha * drho_dx_alpha \
+               + drho_dy_alpha * drho_dy_alpha \
+               + drho_dz_alpha * drho_dz_alpha
+
+        tmp_ab = drho_dx_alpha * drho_dx_beta \
+               + drho_dy_alpha * drho_dy_beta \
+               + drho_dz_alpha * drho_dz_beta
+
+        tmp_bb = drho_dx_beta * drho_dx_beta \
+               + drho_dy_beta * drho_dy_beta \
+               + drho_dz_beta * drho_dz_beta
+
         count = 0
         for i in range (0, basis.real_space_grid_dim[0] ):
             for j in range (0, basis.real_space_grid_dim[1] ):
                 for k in range (0, basis.real_space_grid_dim[2] ):
 
                     # aa
-                    contracted_gradient[count] = drho_dx_alpha[i, j, k] * drho_dx_alpha[i, j, k] \
-                                               + drho_dy_alpha[i, j, k] * drho_dy_alpha[i, j, k] \
-                                               + drho_dz_alpha[i, j, k] * drho_dz_alpha[i, j, k]
+                    contracted_gradient[count] = tmp_aa[i, j, k]
+
                     # ab
-                    contracted_gradient[count+1] = drho_dx_alpha[i, j, k] * drho_dx_beta[i, j, k] \
-                                                 + drho_dy_alpha[i, j, k] * drho_dy_beta[i, j, k] \
-                                                 + drho_dz_alpha[i, j, k] * drho_dz_beta[i, j, k]
+                    contracted_gradient[count+1] = tmp_ab[i, j, k]
+
                     # bb
-                    contracted_gradient[count+2] = drho_dx_beta[i, j, k] * drho_dx_beta[i, j, k] \
-                                                 + drho_dy_beta[i, j, k] * drho_dy_beta[i, j, k] \
-                                                 + drho_dz_beta[i, j, k] * drho_dz_beta[i, j, k]
+                    contracted_gradient[count+2] = tmp_bb[i, j, k]
 
                     count = count + 3
 
@@ -220,10 +228,76 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
         vrho_x = ret_x['vrho']
         vsigma_x = ret_x['vsigma']
 
+        # unpack vsigma_x
+        vsigma_x_aa = np.zeros_like(rho_alpha)
+        vsigma_x_ab = np.zeros_like(rho_alpha)
+        vsigma_x_bb = np.zeros_like(rho_alpha)
+
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+
+                    vsigma_x_aa[i, j, k] = vsigma_x[count, 0]
+                    vsigma_x_ab[i, j, k] = vsigma_x[count, 1]
+                    vsigma_x_bb[i, j, k] = vsigma_x[count, 2]
+
+                    count = count + 1
+
+        # divergence of vsigma_x
+        dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) \
+                       + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) \
+                       + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2)
+
+        dvsigma_x_ab_a = np.gradient(vsigma_x_ab * drho_dx_alpha, axis=0) \
+                       + np.gradient(vsigma_x_ab * drho_dy_alpha, axis=1) \
+                       + np.gradient(vsigma_x_ab * drho_dz_alpha, axis=2)
+
+        dvsigma_x_ab_b = np.gradient(vsigma_x_ab * drho_dx_beta, axis=0) \
+                       + np.gradient(vsigma_x_ab * drho_dy_beta, axis=1) \
+                       + np.gradient(vsigma_x_ab * drho_dz_beta, axis=2)
+
+        dvsigma_x_bb_b = np.gradient(vsigma_x_bb * drho_dx_beta, axis=0) \
+                       + np.gradient(vsigma_x_bb * drho_dy_beta, axis=1) \
+                       + np.gradient(vsigma_x_bb * drho_dz_beta, axis=2)
+
         # compute correlaction functional
         ret_c = libxc_c_functional.compute( inp )
         vrho_c = ret_c['vrho']
         vsigma_c = ret_c['vsigma']
+
+        # unpack vsigma_c
+        vsigma_c_aa = np.zeros_like(rho_alpha)
+        vsigma_c_ab = np.zeros_like(rho_alpha)
+        vsigma_c_bb = np.zeros_like(rho_alpha)
+
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+
+                    vsigma_c_aa[i, j, k] = vsigma_c[count, 0]
+                    vsigma_c_ab[i, j, k] = vsigma_c[count, 1]
+                    vsigma_c_bb[i, j, k] = vsigma_c[count, 2]
+
+                    count = count + 1
+
+        # divergence of vsigma_c
+        dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) \
+                       + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) \
+                       + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2)
+
+        dvsigma_c_ab_a = np.gradient(vsigma_c_ab * drho_dx_alpha, axis=0) \
+                       + np.gradient(vsigma_c_ab * drho_dy_alpha, axis=1) \
+                       + np.gradient(vsigma_c_ab * drho_dz_alpha, axis=2)
+
+        dvsigma_c_ab_b = np.gradient(vsigma_c_ab * drho_dx_beta, axis=0) \
+                       + np.gradient(vsigma_c_ab * drho_dy_beta, axis=1) \
+                       + np.gradient(vsigma_c_ab * drho_dz_beta, axis=2)
+
+        dvsigma_c_bb_b = np.gradient(vsigma_c_bb * drho_dx_beta, axis=0) \
+                       + np.gradient(vsigma_c_bb * drho_dy_beta, axis=1) \
+                       + np.gradient(vsigma_c_bb * drho_dz_beta, axis=2)
 
         # unpack v_xc(r) and fourier transform
 
@@ -243,6 +317,18 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     tmp_beta[i, j, k] += vrho_c[count, 1]
 
                     count = count + 1
+
+        tmp_alpha -= 2.0 * dvsigma_x_aa_a
+        tmp_alpha -= dvsigma_x_ab_b
+
+        tmp_alpha -= 2.0 * dvsigma_c_aa_a
+        tmp_alpha -= dvsigma_c_ab_b
+
+        tmp_beta -= 2.0 * dvsigma_x_bb_b
+        tmp_beta -= dvsigma_x_ab_a
+
+        tmp_beta -= 2.0 * dvsigma_c_bb_b
+        tmp_beta -= dvsigma_c_ab_a
 
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
@@ -301,25 +387,47 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
         drho_dy_beta = np.gradient(rho_beta, axis=1)
         drho_dz_beta = np.gradient(rho_beta, axis=2)
 
+        tmp_aa = drho_dx_alpha * drho_dx_alpha \
+               + drho_dy_alpha * drho_dy_alpha \
+               + drho_dz_alpha * drho_dz_alpha
+
+        tmp_ab = drho_dx_alpha * drho_dx_beta \
+               + drho_dy_alpha * drho_dy_beta \
+               + drho_dz_alpha * drho_dz_beta
+
+        tmp_bb = drho_dx_beta * drho_dx_beta \
+               + drho_dy_beta * drho_dy_beta \
+               + drho_dz_beta * drho_dz_beta
+
         count = 0
         for i in range (0, basis.real_space_grid_dim[0] ):
             for j in range (0, basis.real_space_grid_dim[1] ):
                 for k in range (0, basis.real_space_grid_dim[2] ):
 
                     # aa
-                    contracted_gradient[count] = drho_dx_alpha[i, j, k] * drho_dx_alpha[i, j, k] \
-                                               + drho_dy_alpha[i, j, k] * drho_dy_alpha[i, j, k] \
-                                               + drho_dz_alpha[i, j, k] * drho_dz_alpha[i, j, k]
-                    # ab
-                    contracted_gradient[count+1] = drho_dx_alpha[i, j, k] * drho_dx_beta[i, j, k] \
-                                                 + drho_dy_alpha[i, j, k] * drho_dy_beta[i, j, k] \
-                                                 + drho_dz_alpha[i, j, k] * drho_dz_beta[i, j, k]
-                    # bb
-                    contracted_gradient[count+2] = drho_dx_beta[i, j, k] * drho_dx_beta[i, j, k] \
-                                                 + drho_dy_beta[i, j, k] * drho_dy_beta[i, j, k] \
-                                                 + drho_dz_beta[i, j, k] * drho_dz_beta[i, j, k]
+                    contracted_gradient[count] = tmp_aa[i, j, k]
 
-                    count = count + 3
+                    # ab
+                    contracted_gradient[count+1] = tmp_ab[i, j, k]
+
+                    # bb
+                    contracted_gradient[count+2] = tmp_bb[i, j, k]
+
+        count = 0
+        for i in range (0, basis.real_space_grid_dim[0] ):
+            for j in range (0, basis.real_space_grid_dim[1] ):
+                for k in range (0, basis.real_space_grid_dim[2] ):
+
+                    # aa
+                    contracted_gradient[count] = tmp_aa[i, j, k] 
+
+                    # ab
+                    contracted_gradient[count+1] = tmp_ab[i, j, k]
+
+                    # bb
+                    contracted_gradient[count+2] = tmp_bb[i, j, k]
+                                                 
+                    count = count + 3 
 
         inp = {
             "rho" : combined_rho,
