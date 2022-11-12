@@ -244,7 +244,7 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
 
                     count = count + 1
 
-        # divergence of vsigma_x
+        # additional derivatives involving vsigma_x
         dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) \
                        + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) \
                        + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2)
@@ -282,7 +282,7 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
 
                     count = count + 1
 
-        # divergence of vsigma_c
+        # additional derivatives involving vsigma_c
         dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) \
                        + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) \
                        + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2)
@@ -413,20 +413,6 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
                     # bb
                     contracted_gradient[count+2] = tmp_bb[i, j, k]
 
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-
-                    # aa
-                    contracted_gradient[count] = tmp_aa[i, j, k] 
-
-                    # ab
-                    contracted_gradient[count+1] = tmp_ab[i, j, k]
-
-                    # bb
-                    contracted_gradient[count+2] = tmp_bb[i, j, k]
-                                                 
                     count = count + 3 
 
         inp = {
