@@ -305,7 +305,6 @@ def get_nonlocal_pseudopotential_gth_legendre(SI, legendre, pg, gind, gth_params
 
     return vsg / omega
 
-
 def get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = False):
 
     """
