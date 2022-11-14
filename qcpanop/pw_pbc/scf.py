@@ -236,7 +236,6 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
 
     return xc_energy
 
-
 def get_matrix_elements(basis, kid, vg):
 
     """
@@ -259,7 +258,10 @@ def get_matrix_elements(basis, kid, vg):
         ik = basis.kg_to_g[kid][aa]
         gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
         #inds = basis.miller_to_g[gdiff.T.tolist()]
-        inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
+        # inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
+        inds = basis.miller_to_g[gdiff[:, 0], 
+                                 gdiff[:, 1],
+                                 gdiff[:, 2]]
 
         potential[aa, aa:] = vg[inds]
 
@@ -387,7 +389,7 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     for pp in range(basis.n_plane_waves_per_k[kid]):
         oei[pp][pp] *= 0.5
 
-    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
+    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C, optimize=True)
 
     one_electron_energy = 0.0
     for pp in range(N):
