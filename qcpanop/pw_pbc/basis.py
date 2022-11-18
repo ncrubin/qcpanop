@@ -149,10 +149,13 @@ class plane_wave_basis():
         ke_cutoff: kinetic energy cutoff (atomic units)
         n_kpts: number of k-points
         charge: charge
+        a: lattice vectors
 
         """
 
         a = cell.a
+        self.a = a
+
         h = cell.reciprocal_vectors()
 
         self.nl_pp_use_legendre = nl_pp_use_legendre

@@ -9,7 +9,7 @@ import pylibxc
 
 # TODO: this thing shouldn't be global, and i should be able to select the functional
 #libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
-libxc_x_functional = pylibxc.LibXCFunctional("gga_x_pbe", "polarized")
+libxc_x_functional = pylibxc.LibXCFunctional("gga_x_b88", "polarized")
 libxc_c_functional = pylibxc.LibXCFunctional("gga_c_pbe", "polarized")
 
 import numpy as np
@@ -180,13 +180,23 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
         # contracted gradient: del rho . del rho as [aa[0], ab[0], bb[0], aa[1], etc.]
         contracted_gradient = np.zeros( [3 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
 
-        drho_dx_alpha = np.gradient(rho_alpha, axis=0)
-        drho_dy_alpha = np.gradient(rho_alpha, axis=1)
-        drho_dz_alpha = np.gradient(rho_alpha, axis=2)
+        # box size
+        a = basis.a
+        xdim = np.linalg.norm(a[0]) 
+        ydim = np.linalg.norm(a[1]) 
+        zdim = np.linalg.norm(a[2]) 
 
-        drho_dx_beta = np.gradient(rho_beta, axis=0)
-        drho_dy_beta = np.gradient(rho_beta, axis=1)
-        drho_dz_beta = np.gradient(rho_beta, axis=2)
+        hx = xdim / basis.real_space_grid_dim[0] 
+        hy = ydim / basis.real_space_grid_dim[1] 
+        hz = zdim / basis.real_space_grid_dim[2] 
+
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0) / hx
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1) / hy
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2) / hz
+
+        drho_dx_beta = np.gradient(rho_beta, axis=0) / hx
+        drho_dy_beta = np.gradient(rho_beta, axis=1) / hy
+        drho_dz_beta = np.gradient(rho_beta, axis=2) / hz
 
         tmp_aa = drho_dx_alpha * drho_dx_alpha \
                + drho_dy_alpha * drho_dy_alpha \
@@ -245,21 +255,21 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     count = count + 1
 
         # additional derivatives involving vsigma_x
-        dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) \
-                       + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) \
-                       + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2)
+        dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) / hx \
+                       + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) / hy \
+                       + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2) / hz
 
-        dvsigma_x_ab_a = np.gradient(vsigma_x_ab * drho_dx_alpha, axis=0) \
-                       + np.gradient(vsigma_x_ab * drho_dy_alpha, axis=1) \
-                       + np.gradient(vsigma_x_ab * drho_dz_alpha, axis=2)
+        dvsigma_x_ab_a = np.gradient(vsigma_x_ab * drho_dx_alpha, axis=0) / hx \
+                       + np.gradient(vsigma_x_ab * drho_dy_alpha, axis=1) / hy \
+                       + np.gradient(vsigma_x_ab * drho_dz_alpha, axis=2) / hz
 
-        dvsigma_x_ab_b = np.gradient(vsigma_x_ab * drho_dx_beta, axis=0) \
-                       + np.gradient(vsigma_x_ab * drho_dy_beta, axis=1) \
-                       + np.gradient(vsigma_x_ab * drho_dz_beta, axis=2)
+        dvsigma_x_ab_b = np.gradient(vsigma_x_ab * drho_dx_beta, axis=0) / hx \
+                       + np.gradient(vsigma_x_ab * drho_dy_beta, axis=1) / hy \
+                       + np.gradient(vsigma_x_ab * drho_dz_beta, axis=2) / hz
 
-        dvsigma_x_bb_b = np.gradient(vsigma_x_bb * drho_dx_beta, axis=0) \
-                       + np.gradient(vsigma_x_bb * drho_dy_beta, axis=1) \
-                       + np.gradient(vsigma_x_bb * drho_dz_beta, axis=2)
+        dvsigma_x_bb_b = np.gradient(vsigma_x_bb * drho_dx_beta, axis=0) / hx \
+                       + np.gradient(vsigma_x_bb * drho_dy_beta, axis=1) / hy \
+                       + np.gradient(vsigma_x_bb * drho_dz_beta, axis=2) / hz
 
         # compute correlaction functional
         ret_c = libxc_c_functional.compute( inp )
@@ -283,21 +293,21 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
                     count = count + 1
 
         # additional derivatives involving vsigma_c
-        dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) \
-                       + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) \
-                       + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2)
+        dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) / hx \
+                       + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) / hy \
+                       + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2) / hz
 
-        dvsigma_c_ab_a = np.gradient(vsigma_c_ab * drho_dx_alpha, axis=0) \
-                       + np.gradient(vsigma_c_ab * drho_dy_alpha, axis=1) \
-                       + np.gradient(vsigma_c_ab * drho_dz_alpha, axis=2)
+        dvsigma_c_ab_a = np.gradient(vsigma_c_ab * drho_dx_alpha, axis=0) / hx \
+                       + np.gradient(vsigma_c_ab * drho_dy_alpha, axis=1) / hy \
+                       + np.gradient(vsigma_c_ab * drho_dz_alpha, axis=2) / hz
 
-        dvsigma_c_ab_b = np.gradient(vsigma_c_ab * drho_dx_beta, axis=0) \
-                       + np.gradient(vsigma_c_ab * drho_dy_beta, axis=1) \
-                       + np.gradient(vsigma_c_ab * drho_dz_beta, axis=2)
+        dvsigma_c_ab_b = np.gradient(vsigma_c_ab * drho_dx_beta, axis=0) / hx \
+                       + np.gradient(vsigma_c_ab * drho_dy_beta, axis=1) / hy \
+                       + np.gradient(vsigma_c_ab * drho_dz_beta, axis=2) / hz
 
-        dvsigma_c_bb_b = np.gradient(vsigma_c_bb * drho_dx_beta, axis=0) \
-                       + np.gradient(vsigma_c_bb * drho_dy_beta, axis=1) \
-                       + np.gradient(vsigma_c_bb * drho_dz_beta, axis=2)
+        dvsigma_c_bb_b = np.gradient(vsigma_c_bb * drho_dx_beta, axis=0) / hx \
+                       + np.gradient(vsigma_c_bb * drho_dy_beta, axis=1) / hy \
+                       + np.gradient(vsigma_c_bb * drho_dz_beta, axis=2) / hz
 
         # unpack v_xc(r) and fourier transform
 
@@ -364,7 +374,7 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
 
     xc_energy = 0.0
 
-    if xc == 'lda':
+    if xc == 'lda' :
 
         # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
         combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
@@ -379,13 +389,23 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
         # contracted gradient: del rho . del rho as [aa[0], ab[0], bb[0], aa[1], etc.]
         contracted_gradient = np.zeros( [3 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
 
-        drho_dx_alpha = np.gradient(rho_alpha, axis=0)
-        drho_dy_alpha = np.gradient(rho_alpha, axis=1)
-        drho_dz_alpha = np.gradient(rho_alpha, axis=2)
+        # box size
+        a = basis.a
+        xdim = np.linalg.norm(a[0]) 
+        ydim = np.linalg.norm(a[1]) 
+        zdim = np.linalg.norm(a[2]) 
+        
+        hx = xdim / basis.real_space_grid_dim[0]
+        hy = ydim / basis.real_space_grid_dim[1]
+        hz = zdim / basis.real_space_grid_dim[2]
 
-        drho_dx_beta = np.gradient(rho_beta, axis=0)
-        drho_dy_beta = np.gradient(rho_beta, axis=1)
-        drho_dz_beta = np.gradient(rho_beta, axis=2)
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0) / hx
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1) / hy
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2) / hz
+
+        drho_dx_beta = np.gradient(rho_beta, axis=0) / hx
+        drho_dy_beta = np.gradient(rho_beta, axis=1) / hy
+        drho_dz_beta = np.gradient(rho_beta, axis=2) / hz
 
         tmp_aa = drho_dx_alpha * drho_dx_alpha \
                + drho_dy_alpha * drho_dy_alpha \
@@ -436,6 +456,7 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
         val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_c.flatten()
 
         xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
+        print(xc_energy)
 
     else:
         raise Exception("unsupported xc functional")
