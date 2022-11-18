@@ -9,7 +9,7 @@ import pylibxc
 
 # TODO: this thing shouldn't be global, and i should be able to select the functional
 #libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
-libxc_x_functional = pylibxc.LibXCFunctional("gga_x_b88", "polarized")
+libxc_x_functional = pylibxc.LibXCFunctional("gga_x_pbe", "polarized")
 libxc_c_functional = pylibxc.LibXCFunctional("gga_c_pbe", "polarized")
 
 import numpy as np
@@ -456,7 +456,6 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
         val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_c.flatten()
 
         xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
-        print(xc_energy)
 
     else:
         raise Exception("unsupported xc functional")
