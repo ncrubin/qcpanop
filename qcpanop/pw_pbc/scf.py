@@ -533,7 +533,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
     scf_iter = 0
 
-
     # begin UKS iterations
     for i in range(0, maxiter):
 
@@ -562,7 +561,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         for kid in range( len(basis.kpts) ):
 
             # alpha
-
             # form fock matrix
             fock = form_fock_matrix(basis, kid, v = va)
             if xc == 'hf' :
