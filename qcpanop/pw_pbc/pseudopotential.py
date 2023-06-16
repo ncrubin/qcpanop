@@ -175,7 +175,10 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
 
     # spherical polar representation of plane wave basis 
     rgv, thetagv, phigv = pbcgto.pseudo.pp.cart2polar(gv)
-    
+
+    # rgv_test = np.sqrt(np.einsum('ik,ik->i', gv, gv))
+    # assert np.allclose(rgv_test, rgv) # ||k|| which will go into the projectors
+
     gmax = len(gv)
 
     # number of atoms

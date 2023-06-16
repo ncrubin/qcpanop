@@ -38,7 +38,6 @@ def main():
                  dimension = 3)
     
     cell.build()
-
     # get plane wave basis information
     basis = plane_wave_basis(cell, 
                              ke_cutoff = 1000.0 / 27.21138602, 
