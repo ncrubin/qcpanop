@@ -13,12 +13,12 @@ libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
 import numpy as np
 import scipy
 
-from pw_pbc.diis import DIIS
+from qcpanop.pw_pbc.diis import DIIS
 
-from pw_pbc.pseudopotential import get_local_pseudopotential_gth
-from pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
+from qcpanop.pw_pbc.pseudopotential import get_local_pseudopotential_gth
+from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
 
-from pw_pbc.basis import get_miller_indices
+from qcpanop.pw_pbc.basis import get_miller_indices
 
 from pyscf.pbc import tools
 
@@ -746,5 +746,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
     print('')
 
-    assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
+    #assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
+
+    return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
 

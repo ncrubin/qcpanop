@@ -120,7 +120,8 @@ def get_SI(cell, Gv=None):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], nl_pp_use_legendre = False):
+    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], 
+            nl_pp_use_legendre = False, approximate_nl_pp = False):
 
         """
 
@@ -130,6 +131,7 @@ class plane_wave_basis():
         :param ke_cutoff: kinetic energy cutoff (in atomic units), default = 500 eV
         :param n_kpts: number of k-points
         :param nl_pp_use_legendre: use sum rule expression for spherical harmonics?
+        :param approximate_nl_pp: include only one projector per angular momentum
 
         members:
 
@@ -156,6 +158,7 @@ class plane_wave_basis():
         h = cell.reciprocal_vectors()
 
         self.nl_pp_use_legendre = nl_pp_use_legendre
+        self.approximate_nl_pp = approximate_nl_pp
 
         # get k-points
         self.kpts = cell.make_kpts(n_kpts, wrap_around = True)
@@ -183,6 +186,16 @@ class plane_wave_basis():
         self.gth_params = None
         if ( self.use_pseudopotential ):
             self.gth_params = get_gth_pseudopotential_parameters(cell)
+
+            # only one projector per angular momentum?
+            if self.approximate_nl_pp :
+                for center in range (0, len(cell._atom)):
+                    for l in range (0, 3):
+                        for i in range (0, 3):
+                            for j in range (0, 3):
+                                if i == j and i == 0 :
+                                    continue
+                                self.gth_params[center].hgth[l, i, j] = 0.0
 
         self.omega = np.linalg.det(cell.a)
 

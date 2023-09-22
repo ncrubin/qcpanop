@@ -79,6 +79,7 @@ class gth_pseudopotential_parameters():
             my_h = np.zeros((3, 3), dtype=hl.dtype)
             if nl > 0:
                 my_h[:hl.shape[0], :hl.shape[1]] = hl
+                maxi = 3
                 for i in range (0,3):
                     for j in range (0,3):
                         self.hgth[l, i, j] = my_h[i, j]
