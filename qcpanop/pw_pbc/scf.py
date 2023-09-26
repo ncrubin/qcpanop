@@ -326,10 +326,9 @@ def form_orbital_gradient(basis, C, N, F, kid):
 
     """
 
-    tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'float64')
-    for i in range( basis.n_plane_waves_per_k[kid] ):
-        for pp in range(N):
-            tmporbs[i, pp] = C[i, pp]
+    tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'complex128')
+    for pp in range(N):
+        tmporbs[:, pp] = C[:, pp]
 
     D = np.einsum('ik,jk->ij', tmporbs.conj(), tmporbs)
 
