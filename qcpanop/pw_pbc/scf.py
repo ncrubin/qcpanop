@@ -330,15 +330,18 @@ def form_orbital_gradient(basis, C, N, F, kid):
     for pp in range(N):
         tmporbs[:, pp] = C[:, pp]
 
-    D = np.einsum('ik,jk->ij', tmporbs.conj(), tmporbs)
+    #D = np.einsum('ik,jk->ij', tmporbs.conj(), tmporbs)
+    D = np.matmul(tmporbs.conj(), tmporbs.T) 
 
     # only upper triangle of F is populated ... symmetrize and rescale diagonal
     F = F + F.conj().T
     for pp in range(basis.n_plane_waves_per_k[kid]):
         F[pp][pp] *= 0.5
 
-    orbital_gradient = np.einsum('ik,kj->ij', F, D)
-    orbital_gradient -= np.einsum('ik,kj->ij', D, F)
+    #orbital_gradient = np.einsum('ik,kj->ij', F, D)
+    #orbital_gradient -= np.einsum('ik,kj->ij', D, F)
+    orbital_gradient = np.matmul(F, D)
+    orbital_gradient -= np.matmul(D, F)
 
     return D, orbital_gradient
 
