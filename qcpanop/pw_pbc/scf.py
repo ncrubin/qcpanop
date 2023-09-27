@@ -335,8 +335,10 @@ def form_orbital_gradient(basis, C, N, F, kid):
 
     # only upper triangle of F is populated ... symmetrize and rescale diagonal
     F = F + F.conj().T
-    for pp in range(basis.n_plane_waves_per_k[kid]):
-        F[pp][pp] *= 0.5
+    diag = np.diag(F)
+    np.fill_diagonal(F, 0.5 * diag)
+    #for pp in range(basis.n_plane_waves_per_k[kid]):
+    #    F[pp][pp] *= 0.5
 
     #orbital_gradient = np.einsum('ik,kj->ij', F, D)
     #orbital_gradient -= np.einsum('ik,kj->ij', D, F)
@@ -438,19 +440,10 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None):
 
     # only upper triangle of oei is populated ... symmetrize and rescale diagonal
     oei = oei + oei.conj().T
-    for pp in range(basis.n_plane_waves_per_k[kid]):
-        oei[pp][pp] *= 0.5
+    diag = np.diag(oei)
+    np.fill_diagonal(oei, 0.5 * diag)
 
-    #diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
-    diagonal_oei = np.einsum('pi,pq,qi->i',C.conj(),oei,C)
-
-    #opdm = np.einsum('pi,qi->pq', C.conj(), C)
-    #one_electron_energy = np.einsum('pq, pq->', opdm, oei)
-
-    one_electron_energy = 0.0
-    for pp in range(N):
-        #one_electron_energy += ( diagonal_oei[pp][pp] ) / len(basis.kpts)
-        one_electron_energy += ( diagonal_oei[pp] ) / len(basis.kpts)
+    one_electron_energy = np.einsum('pi,pq,qi->',C.conj(),oei,C) / len(basis.kpts)
 
     return one_electron_energy
 
@@ -473,19 +466,12 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
     oei = get_matrix_elements(basis, kid, v_coulomb)
 
+    # only upper triangle of oei is populated ... symmetrize and rescale diagonal
     oei = oei + oei.conj().T
-    for pp in range(basis.n_plane_waves_per_k[kid]):
-        oei[pp][pp] *= 0.5
+    diag = np.diag(oei)
+    np.fill_diagonal(oei, 0.5 * diag)
 
-    #tmp = np.einsum('pi,pq->iq', C.conj(), oei)
-    #diagonal_oei = np.einsum('iq,qj->ij', tmp, C)
-    #diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
-    diagonal_oei = np.einsum('pi,pq,qi->i',C.conj(),oei,C)
-
-    coulomb_energy = 0.0
-    for pp in range(N):
-        #coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
-        coulomb_energy += 0.5 * ( diagonal_oei[pp] ) / len(basis.kpts)
+    coulomb_energy = 0.5 * np.einsum('pi,pq,qi->',C.conj(),oei,C) / len(basis.kpts)
 
     return coulomb_energy
 
