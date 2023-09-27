@@ -474,7 +474,9 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     for pp in range(basis.n_plane_waves_per_k[kid]):
         oei[pp][pp] *= 0.5
 
-    diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
+    tmp = np.einsum('pi,pq->iq', C.conj(), oei)
+    diagonal_oei = np.einsum('iq,qj->ij', tmp, C)
+    #diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
 
     coulomb_energy = 0.0
     for pp in range(N):
@@ -630,6 +632,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             if scf_iter == 0 and guess_mix == True :
                 n = nalpha
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock_a, lower = False, eigvals=(0,n))
+            #epsilon_alpha, Calpha = np.linalg.eigh(fock_a, UPLO = 'U')
             #print(epsilon_alpha - madelung)
             
             # break spin symmetry?
@@ -672,6 +675,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
             # diagonalize fock matrix
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock_b, lower = False, eigvals=(0,nbeta-1))
+            #epsilon_beta, Cbeta = np.linalg.eigh(fock_b, UPLO = 'U')
 
             # one-electron part of the energy 
             one_electron_energy += get_one_electron_energy(basis, 
@@ -748,6 +752,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             # diagonalize extrapolated fock matrix
             epsilon_alpha, Calpha = scipy.linalg.eigh(new_fock_a, lower = False, eigvals=(0,nalpha-1))
             epsilon_beta, Cbeta = scipy.linalg.eigh(new_fock_b, lower = False, eigvals=(0,nbeta-1))
+            #epsilon_alpha, Calpha = np.linalg.eigh(new_fock_a, UPLO = 'U')
+            #epsilon_beta, Cbeta = np.linalg.eigh(new_fock_b, UPLO = 'U')
 
             # update density
             rho_alpha, occ_alpha = get_density(basis, Calpha, nalpha, kid)
