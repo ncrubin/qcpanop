@@ -474,13 +474,15 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     for pp in range(basis.n_plane_waves_per_k[kid]):
         oei[pp][pp] *= 0.5
 
-    tmp = np.einsum('pi,pq->iq', C.conj(), oei)
-    diagonal_oei = np.einsum('iq,qj->ij', tmp, C)
+    #tmp = np.einsum('pi,pq->iq', C.conj(), oei)
+    #diagonal_oei = np.einsum('iq,qj->ij', tmp, C)
     #diagonal_oei = np.einsum('pi,pq,qj->ij',C.conj(),oei,C)
+    diagonal_oei = np.einsum('pi,pq,qi->i',C.conj(),oei,C)
 
     coulomb_energy = 0.0
     for pp in range(N):
-        coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
+        #coulomb_energy += 0.5 * ( diagonal_oei[pp][pp] ) / len(basis.kpts)
+        coulomb_energy += 0.5 * ( diagonal_oei[pp] ) / len(basis.kpts)
 
     return coulomb_energy
 
