@@ -527,11 +527,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     # density in reciprocal space
     rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
-    # density in real space
-    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-
     # charges
     valence_charges = cell.atom_charges()
     
@@ -565,11 +560,13 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     if damp_fock :
         damping_factor = 0.5
 
+    # density in real space
+    rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
     # diis 
     diis_dimension = 8
     diis_start_cycle = 4
-    #diis_update = DIIS(diis_dimension, start_iter = diis_start_cycle)
-    my_diis_update = DIIS(diis_dimension, start_iter = diis_start_cycle)
     old_solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
 
     print("")
@@ -600,9 +597,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     old_fock_a = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype = 'complex128')
     old_fock_b = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype = 'complex128')
 
-    old_orbital_gradient_a = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype = 'complex128')
-    old_orbital_gradient_b = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype = 'complex128')
-
     from pyscf import lib
     adiis = lib.diis.DIIS()
 
@@ -623,15 +617,17 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         else:
             raise Exception("unsupported xc functional")
 
+        # zero density for this iteration
+        rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
         # loop over k-points
         for kid in range( len(basis.kpts) ):
-
-            # alpha
 
             # form fock matrix
             fock_a = form_fock_matrix(basis, kid, v = va)
             fock_b = form_fock_matrix(basis, kid, v = vb)
 
+            # exact exchange?
             if xc == 'hf' :
                 fock_a += exchange_matrix_alpha
                 fock_b += exchange_matrix_beta
@@ -642,9 +638,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
                 fock_a = damping_factor * fock_a + (1.0 - damping_factor) * old_fock_a
                 fock_b = damping_factor * fock_b + (1.0 - damping_factor) * old_fock_b
 
-                #orbital_gradient_a = damping_factor * orbital_gradient_a + (1.0 - damping_factor) * old_orbital_gradient_a
-                #orbital_gradient_b = damping_factor * orbital_gradient_b + (1.0 - damping_factor) * old_orbital_gradient_b
-
             old_fock_a = fock_a.copy()
             old_fock_b = fock_b.copy()
 
@@ -652,33 +645,26 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             orbital_gradient_a = form_orbital_gradient(basis, Calpha, nalpha, fock_a, kid)
             orbital_gradient_b = form_orbital_gradient(basis, Cbeta, nbeta, fock_b, kid)
 
-            #old_orbital_gradient_a = orbital_gradient_a
-            #old_orbital_gradient_b = orbital_gradient_b
-
             # extrapolate fock matrix
 
-            dim = basis.n_plane_waves_per_k[0]
-
             # solution vector is fock matrix
-            my_solution_vector = np.hstack( (fock_a.flatten(), fock_b.flatten()) )
+            solution_vector = np.hstack( (fock_a.flatten(), fock_b.flatten()) )
 
             # error vector is orbital gradient
-            my_error_vector = np.hstack( (orbital_gradient_a.flatten(), orbital_gradient_b.flatten()) )
+            error_vector = np.hstack( (orbital_gradient_a.flatten(), orbital_gradient_b.flatten()) )
 
             # extrapolate solution vector
-            #my_new_solution_vector = my_diis_update.compute_new_vec(my_solution_vector, my_error_vector)
-            my_new_solution_vector = adiis.update(my_solution_vector, my_error_vector)
+            new_solution_vector = adiis.update(solution_vector, error_vector)
 
             # reshape solution vector
-            fock_a = my_new_solution_vector[:dim*dim].reshape(fock_a.shape)
-            fock_b = my_new_solution_vector[dim*dim:].reshape(fock_b.shape)
+            dim = basis.n_plane_waves_per_k[0]
+            fock_a = new_solution_vector[:dim*dim].reshape(fock_a.shape)
+            fock_b = new_solution_vector[dim*dim:].reshape(fock_b.shape)
 
             # diagonalize extrapolated fock matrix
             n = nalpha - 1
             if scf_iter == 0 and guess_mix == True :
                 n = nalpha
-            #epsilon_alpha, Calpha = scipy.linalg.eigh(fock_a, lower = False, eigvals=(0, 4*n))
-            #epsilon_beta, Cbeta = scipy.linalg.eigh(fock_b, lower = False, eigvals=(0, 4*(nbeta-1)))
 
             epsilon_alpha, Calpha = scipy.linalg.eigh(fock_a, eigvals=(0, n))
             epsilon_beta, Cbeta = scipy.linalg.eigh(fock_b, eigvals=(0, (nbeta-1)))
@@ -702,28 +688,24 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
             rho_alpha, occ_alpha = get_density(basis, Calpha, nalpha, kid)
             rho_beta, occ_beta = get_density(basis, Cbeta, nbeta, kid)
 
-            # extrapolate density
-            #rho_dim = basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]
-            #solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
-            #error_vector = old_solution_vector - solution_vector
-            #new_solution_vector = diis_update.compute_new_vec(solution_vector, error_vector)
-            #rho_alpha = new_solution_vector[:rho_dim].reshape(rho_alpha.shape)
-            #rho_beta = new_solution_vector[rho_dim:].reshape(rho_beta.shape)
-            #old_solution_vector = np.copy(new_solution_vector)
-
+            # density should be non-negative ...
+            rho_alpha = rho_alpha.clip(min = 0)
+            rho_beta = rho_beta.clip(min = 0)
 
             # convergence in density
-            rho_diff_norm = np.linalg.norm(my_error_vector)
-            #rho_diff_norm = np.linalg.norm(error_vector)
+            rho_diff_norm = np.linalg.norm(error_vector)
 
-            # one-electron part of the energy 
+            # accumulate density contribution from this k-point
+            rho += rho_alpha + rho_beta
+
+            # one-electron part of the energy (alpha)
             one_electron_energy += get_one_electron_energy(basis, 
                                                            Calpha, 
                                                            nalpha, 
                                                            kid, 
                                                            v_ne = v_ne)
 
-            # one-electron part of the energy 
+            # one-electron part of the energy (beta)
             one_electron_energy += get_one_electron_energy(basis, 
                                                            Cbeta, 
                                                            nbeta, 
@@ -749,12 +731,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
                 xc_energy += my_xc_energy
 
             xc_energy -= 0.5 * (nalpha + nbeta) * madelung
-
-        # density should be non-negative ...
-        rho_alpha = rho_alpha.clip(min = 0)
-        rho_beta = rho_beta.clip(min = 0)
-
-        rho = rho_alpha + rho_beta
 
         # coulomb potential
         tmp = np.fft.ifftn(rho)
