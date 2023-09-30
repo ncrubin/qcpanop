@@ -560,14 +560,9 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     if damp_fock :
         damping_factor = 0.5
 
-    # density in real space
-    rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-
     # diis 
     diis_dimension = 8
     diis_start_cycle = 4
-    old_solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
 
     print("")
     print('    no. k-points:                                %20i' % ( len(basis.kpts) ) )
@@ -586,20 +581,34 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     print("    ==> Begin UKS Iterations <==")
     print("")
 
-    print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '|[F, D]|', 'Nelec'))
+    print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec'))
 
     old_total_energy = 0.0
 
-    # begin UKS iterations
-    Calpha = np.eye(basis.n_plane_waves_per_k[0])
-    Cbeta = np.eye(basis.n_plane_waves_per_k[0])
+    fock_a = []
+    fock_b = []
 
-    old_fock_a = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype = 'complex128')
-    old_fock_b = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype = 'complex128')
+    Calpha = []
+    Cbeta = []
+
+    old_fock_a = []
+    old_fock_b = []
+
+    for kid in range ( len(basis.kpts) ):
+
+        fock_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+        fock_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+
+        old_fock_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+        old_fock_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+
+        Calpha.append(np.eye(basis.n_plane_waves_per_k[kid]))
+        Cbeta.append(np.eye(basis.n_plane_waves_per_k[kid]))
 
     from pyscf import lib
     adiis = lib.diis.DIIS()
 
+    # begin UKS iterations
     for scf_iter in range(0, maxiter):
 
         occ_alpha = []
@@ -620,12 +629,35 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         # zero density for this iteration
         rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
+        # form each block of the fock matrix and orbital gradient
+        damp = 1.0
+        if scf_iter > 0 and scf_iter < 1 * diis_start_cycle :
+            damp = damping_factor
+
+        # form fock matrix and orbital gradient
+
+        fock_a = []
+        fock_b = []
+        grad_a = []
+        grad_b = []
+
+        for kid in range ( len(basis.kpts) ):
+            fock_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+            fock_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+            grad_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+            grad_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
+
+        # damping factor
+        damp = 1.0
+        if scf_iter < diis_start_cycle and damp_fock : 
+            damp = damping_factor
+
         # loop over k-points
         for kid in range( len(basis.kpts) ):
 
             # form fock matrix
-            fock_a = form_fock_matrix(basis, kid, v = va)
-            fock_b = form_fock_matrix(basis, kid, v = vb)
+            fock_a[kid] = form_fock_matrix(basis, kid, v = va)
+            fock_b[kid] = form_fock_matrix(basis, kid, v = vb)
 
             # exact exchange?
             if xc == 'hf' :
@@ -633,41 +665,57 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
                 fock_b += exchange_matrix_beta
 
             # damp fock matrix
-            if scf_iter > 0 and scf_iter < 1 * diis_start_cycle and damp_fock: 
-
-                fock_a = damping_factor * fock_a + (1.0 - damping_factor) * old_fock_a
-                fock_b = damping_factor * fock_b + (1.0 - damping_factor) * old_fock_b
-
-            old_fock_a = fock_a.copy()
-            old_fock_b = fock_b.copy()
+            fock_a[kid] = damp * fock_a[kid] + (1.0 - damp) * old_fock_a[kid]
+            fock_b[kid] = damp * fock_b[kid] + (1.0 - damp) * old_fock_b[kid]
+            old_fock_a[kid] = fock_a[kid].copy()
+            old_fock_b[kid] = fock_b[kid].copy()
 
             # form opdm and orbital gradient (for diis)
-            orbital_gradient_a = form_orbital_gradient(basis, Calpha, nalpha, fock_a, kid)
-            orbital_gradient_b = form_orbital_gradient(basis, Cbeta, nbeta, fock_b, kid)
+            grad_a[kid] = form_orbital_gradient(basis, Calpha[kid], nalpha, fock_a[kid], kid)
+            grad_b[kid] = form_orbital_gradient(basis, Cbeta[kid], nbeta, fock_b[kid], kid)
 
-            # extrapolate fock matrix
+        # extrapolate fock matrix
 
-            # solution vector is fock matrix
-            solution_vector = np.hstack( (fock_a.flatten(), fock_b.flatten()) )
+        # solution vector is fock matrix
+        solution_vector = np.zeros(0)
+        for kid in range ( len(basis.kpts) ):
+            solution_vector = np.hstack( (solution_vector, fock_a[kid].flatten(), fock_b[kid].flatten() ) )
 
-            # error vector is orbital gradient
-            error_vector = np.hstack( (orbital_gradient_a.flatten(), orbital_gradient_b.flatten()) )
+        # error vector is orbital gradient
+        error_vector = np.zeros(0)
+        for kid in range ( len(basis.kpts) ):
+            error_vector = np.hstack( (error_vector, grad_a[kid].flatten(), grad_b[kid].flatten() ) )
 
-            # extrapolate solution vector
-            new_solution_vector = adiis.update(solution_vector, error_vector)
+        # norm of orbital gradient
+        conv = np.linalg.norm(error_vector)
 
-            # reshape solution vector
-            dim = basis.n_plane_waves_per_k[0]
-            fock_a = new_solution_vector[:dim*dim].reshape(fock_a.shape)
-            fock_b = new_solution_vector[dim*dim:].reshape(fock_b.shape)
+        # extrapolate solution vector
+        new_solution_vector = adiis.update(solution_vector, error_vector)
 
-            # diagonalize extrapolated fock matrix
+        # reshape solution vector
+        off = 0
+        for kid in range ( len(basis.kpts) ):
+            dim = basis.n_plane_waves_per_k[kid]
+            fock_a[kid] = new_solution_vector[off:off+dim*dim].reshape(fock_a[kid].shape)
+            off += dim*dim
+            fock_b[kid] = new_solution_vector[off:off+dim*dim].reshape(fock_b[kid].shape)
+            off += dim*dim
+
+        one_electron_energy = 0.0
+        coulomb_energy = 0.0
+
+        rho_a = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+        rho_b = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+        # diagonalize extrapolated fock matrix
+        for kid in range ( len(basis.kpts) ):
+
             n = nalpha - 1
             if scf_iter == 0 and guess_mix == True :
                 n = nalpha
 
-            epsilon_alpha, Calpha = scipy.linalg.eigh(fock_a, eigvals=(0, n))
-            epsilon_beta, Cbeta = scipy.linalg.eigh(fock_b, eigvals=(0, (nbeta-1)))
+            epsilon_alpha, Calpha[kid] = scipy.linalg.eigh(fock_a[kid], eigvals=(0, n))
+            epsilon_beta, Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, (nbeta-1)))
 
             #epsilon_alpha, Calpha = np.linalg.eigh(fock_a)
             #epsilon_beta, Cbeta = np.linalg.eigh(fock_b)
@@ -678,49 +726,46 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
                 c = np.cos(0.25 * np.pi)
                 s = np.sin(0.25 * np.pi)
 
-                tmp1 = c * Calpha[:, nalpha-1] - s * Calpha[:, nalpha]
-                tmp2 = s * Calpha[:, nalpha-1] + c * Calpha[:, nalpha]
+                tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
+                tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
 
-                Calpha[:, nalpha-1] = tmp1
-                Calpha[:, nalpha] = tmp2
+                Calpha[kid][:, nalpha-1] = tmp1
+                Calpha[kid][:, nalpha] = tmp2
 
             # update density
-            rho_alpha, occ_alpha = get_density(basis, Calpha, nalpha, kid)
-            rho_beta, occ_beta = get_density(basis, Cbeta, nbeta, kid)
+            my_rho_a, occ_alpha = get_density(basis, Calpha[kid], nalpha, kid)
+            my_rho_b, occ_beta = get_density(basis, Cbeta[kid], nbeta, kid)
 
             # density should be non-negative ...
-            rho_alpha = rho_alpha.clip(min = 0)
-            rho_beta = rho_beta.clip(min = 0)
-
-            # convergence in density
-            rho_diff_norm = np.linalg.norm(error_vector)
-
-            # accumulate density contribution from this k-point
-            rho += rho_alpha + rho_beta
+            rho_a += my_rho_a.clip(min = 0)
+            rho_b += my_rho_b.clip(min = 0)
 
             # one-electron part of the energy (alpha)
             one_electron_energy += get_one_electron_energy(basis, 
-                                                           Calpha, 
+                                                           Calpha[kid], 
                                                            nalpha, 
                                                            kid, 
                                                            v_ne = v_ne)
 
             # one-electron part of the energy (beta)
             one_electron_energy += get_one_electron_energy(basis, 
-                                                           Cbeta, 
+                                                           Cbeta[kid], 
                                                            nbeta, 
                                                            kid, 
                                                            v_ne = v_ne)
 
             # coulomb part of the energy: 1/2 J
-            coulomb_energy += get_coulomb_energy(basis, Calpha, nalpha, kid, v_coulomb)
+            coulomb_energy += get_coulomb_energy(basis, Calpha[kid], nalpha, kid, v_coulomb)
 
             # coulomb part of the energy: 1/2 J
-            coulomb_energy += get_coulomb_energy(basis, Cbeta, nbeta, kid, v_coulomb)
+            coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
+
+        rho = rho_a + rho_b
+
 
         if xc == 'lda':
 
-            xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta)
+            xc_energy = get_xc_energy(xc, basis, rho_a, rho_b)
 
         if xc == 'hf':
 
@@ -742,7 +787,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         # exchange-correlation potential
         if xc == 'lda' :
 
-            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta)
+            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_a, rho_b)
 
         elif xc == 'hf' :
 
@@ -765,9 +810,9 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
         # charge
         charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
 
-        print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, rho_diff_norm, charge ) )
+        print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge ) )
 
-        if ( rho_diff_norm < 1e-4 and energy_diff < 1e-5 ) :
+        if ( conv < 1e-4 and energy_diff < 1e-5 ) :
             break
 
     if scf_iter == maxiter - 1:
@@ -792,4 +837,3 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     #assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
 
     return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
-
