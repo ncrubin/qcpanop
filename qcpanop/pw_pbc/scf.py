@@ -486,7 +486,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     return coulomb_energy
 
-def uks(cell, basis, xc = 'lda', guess_mix = True):
+def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock = True, damping_iterations = 8):
 
     """
 
@@ -495,6 +495,9 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     :param cell: the unit cell
     :param basis: plane wave basis information
     :param xc: the exchange-correlation functional
+    :param guess_mix: do mix alpha homo and lumo to break spin symmetry?
+    :param damp_fock: do dampen fock matrix?
+    :param damping_iterations: for how many iterations should we dampen the fock matrix
 
     """
  
@@ -522,7 +525,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     exchange_matrix_beta = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
 
     # maximum number of iterations
-    maxiter = 200
+    maxiter = 500
 
     # density in reciprocal space
     rhog = np.zeros(len(basis.g), dtype = 'complex128')
@@ -560,16 +563,11 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     nalpha = total_charge - nbeta
 
     # damp fock matrix (helps with convergence sometimes)
-    damp_fock = True
     damping_factor = 1.0
     if damp_fock :
         damping_factor = 0.5
 
     # diis 
-    diis_dimension = 8
-    diis_start_cycle = 4
-    #diis_update = DIIS(diis_dimension, start_iter = diis_start_cycle)
-    my_diis_update = DIIS(diis_dimension, start_iter = diis_start_cycle)
     old_solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
 
     print("")
@@ -582,7 +580,8 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
     print('    no. beta bands:                              %20i' % ( nbeta ) )
     print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
     print('    damp fock matrix:                            %20s' % ( "yes" if damp_fock is True else "no" ) )
-    print('    diis start iteration:                        %20i' % ( diis_start_cycle ) )
+    print('    no. damping iterations:                      %20i' % ( damping_iterations ) )
+    #print('    diis start iteration:                        %20i' % ( diis_start_cycle ) )
     print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
 
     print("")
@@ -605,6 +604,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
 
     from pyscf import lib
     adiis = lib.diis.DIIS()
+    adiis.space = diis_dimension
 
     for scf_iter in range(0, maxiter):
 
@@ -637,7 +637,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True):
                 fock_b += exchange_matrix_beta
 
             # damp fock matrix
-            if scf_iter > 0 and scf_iter < 1 * diis_start_cycle and damp_fock: 
+            if scf_iter > 0 and scf_iter < diis_dimension and damp_fock: 
 
                 fock_a = damping_factor * fock_a + (1.0 - damping_factor) * old_fock_a
                 fock_b = damping_factor * fock_b + (1.0 - damping_factor) * old_fock_b
