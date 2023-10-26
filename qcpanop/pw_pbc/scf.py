@@ -174,30 +174,17 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
         #    v_xc[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
-        combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-                    combined_rho[count] = rho_alpha[i, j, k]
-                    combined_rho[count + 1] = rho_beta[i, j, k]
-                    count = count + 2
+        combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
+        combined_rho[::2] = rho_alpha.ravel(order='C')
+        combined_rho[1::2] = rho_beta.ravel(order='C')
 
         # compute
         ret = libxc_functional.compute( combined_rho )
 
         # unpack v_xc(r) and fourier transform
         vrho = ret['vrho']
-        tmp_alpha = np.zeros_like(rho_alpha)
-        tmp_beta = np.zeros_like(rho_beta)
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-                    tmp_alpha[i, j, k] = vrho[count, 0]
-                    tmp_beta[i, j, k] = vrho[count, 1]
-                    count = count + 1
-
+        tmp_alpha = vrho[:, 0].reshape(basis.real_space_grid_dim)
+        tmp_beta = vrho[:, 1].reshape(basis.real_space_grid_dim)
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
 
@@ -235,14 +222,9 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
     if xc == 'lda':
 
         # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
-        combined_rho = np.zeros( [2 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-                    combined_rho[count] = rho_alpha[i, j, k]
-                    combined_rho[count + 1] = rho_beta[i, j, k]
-                    count = count + 2
+        combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
+        combined_rho[::2] = rho_alpha.ravel(order='C')
+        combined_rho[1::2] = rho_beta.ravel(order='C')
 
         # compute
         ret = libxc_functional.compute( combined_rho , do_vxc = False)
@@ -277,7 +259,10 @@ def get_matrix_elements(basis, kid, vg):
         ik = basis.kg_to_g[kid][aa]
         gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
         #inds = basis.miller_to_g[gdiff.T.tolist()]
-        inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
+        # inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
+        inds = basis.miller_to_g[gdiff[:, 0], 
+                                 gdiff[:, 1],
+                                 gdiff[:, 2]]
 
         potential[aa, aa:] = vg[inds]
 
@@ -443,6 +428,7 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     np.fill_diagonal(oei, diagonals)
 
     oei = oei + oei.conj().T
+
     diag = np.diag(oei)
     np.fill_diagonal(oei, 0.5 * diag)
 
@@ -475,6 +461,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     # only upper triangle of oei is populated ... symmetrize and rescale diagonal
     oei = oei + oei.conj().T
+    
     diag = np.diag(oei)
     np.fill_diagonal(oei, 0.5 * diag)
 
