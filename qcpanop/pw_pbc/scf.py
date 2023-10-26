@@ -13,8 +13,6 @@ libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
 import numpy as np
 import scipy
 
-from qcpanop.pw_pbc.diis import DIIS
-
 from qcpanop.pw_pbc.pseudopotential import get_local_pseudopotential_gth
 from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
 
@@ -515,7 +513,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     maxiter = 500
 
     # density in reciprocal space
-    rhog = np.zeros(len(basis.g), dtype = 'complex128')
+    rhog = np.zeros(len(basis.g), dtype = 'float64')
 
     # charges
     valence_charges = cell.atom_charges()
