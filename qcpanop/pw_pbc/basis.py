@@ -60,24 +60,46 @@ def get_plane_wave_basis(ke_cutoff, a, b):
     g2 = np.empty(shape=[0,0],dtype='complex128')
     miller = np.empty(shape=[0,3],dtype='int')
 
-    # build all possible sets of miller indices
-    ivals = np.arange(-reciprocal_max_dim_1, reciprocal_max_dim_1+1)
-    jvals = np.arange(-reciprocal_max_dim_2, reciprocal_max_dim_2+1)
-    kvals = np.arange(-reciprocal_max_dim_3, reciprocal_max_dim_3+1)
-    ijk_vals = cartesian_prod([ivals, jvals, kvals])
-    # get g-values i * b[0] + j * b[1] + k * b[2]
-    gvals = ijk_vals @ b
-    # compute g^2
-    g2vals = np.einsum('ix,ix->i', gvals, gvals)
-    # get items that are below cutoff
-    density_cutoff_mask = np.where(g2vals/2 <= 4 * ke_cutoff)[0]
-    gvals_below_cutoff = gvals[density_cutoff_mask]
-    g2vals_below_cutoff = g2vals[density_cutoff_mask]
-    miller_below_cutoff = ijk_vals[density_cutoff_mask]
+    for i in np.arange(-reciprocal_max_dim_1, reciprocal_max_dim_1+1):
+        for j in np.arange(-reciprocal_max_dim_2, reciprocal_max_dim_2+1):
+            for k in np.arange(-reciprocal_max_dim_3, reciprocal_max_dim_3+1):
 
-    g = gvals_below_cutoff
-    g2 = g2vals_below_cutoff
-    miller = miller_below_cutoff
+                # G vector
+                gtmp = i * b[0] + j * b[1] + k * b[2]
+
+                # |G|^2
+                g2tmp = np.dot(gtmp, gtmp)
+
+                # ke_cutoff for density is 4 times ke_cutoff for orbitals
+                if (g2tmp/2.0 <= 4.0 * ke_cutoff):
+
+                    # collect G vectors
+                    g = np.concatenate( (g, np.expand_dims(gtmp,axis=0) ) ) 
+
+                    # |G|^2
+                    g2 = np.append(g2, g2tmp) 
+
+                    # list of miller indices for G vectors
+                    miller = np.concatenate( (miller, np.expand_dims(np.array([i, j, k]), axis = 0) ) )
+
+    ## build all possible sets of miller indices
+    #ivals = np.arange(-reciprocal_max_dim_1, reciprocal_max_dim_1+1)
+    #jvals = np.arange(-reciprocal_max_dim_2, reciprocal_max_dim_2+1)
+    #kvals = np.arange(-reciprocal_max_dim_3, reciprocal_max_dim_3+1)
+    #ijk_vals = cartesian_prod([ivals, jvals, kvals])
+    ## get g-values i * b[0] + j * b[1] + k * b[2]
+    #gvals = ijk_vals @ b
+    ## compute g^2
+    #g2vals = np.einsum('ix,ix->i', gvals, gvals)
+    ## get items that are below cutoff
+    #density_cutoff_mask = np.where(g2vals/2 <= 4 * ke_cutoff)[0]
+    #gvals_below_cutoff = gvals[density_cutoff_mask]
+    #g2vals_below_cutoff = g2vals[density_cutoff_mask]
+    #miller_below_cutoff = ijk_vals[density_cutoff_mask]
+
+    #g = gvals_below_cutoff
+    #g2 = g2vals_below_cutoff
+    #miller = miller_below_cutoff
 
     # reciprocal_max_dim contains the maximum dimension for reciprocal basis
     reciprocal_max_dim = [int(np.amax(miller[:, 0])), int(np.amax(miller[:, 1])), int(np.amax(miller[:, 2]))]
@@ -282,39 +304,3 @@ def get_miller_indices(idx, basis):
 
     return m1, m2, m3
 
-if __name__ == "__main__":
-    import numpy
-    from pyscf import gto
-    from pyscf.pbc import gto as pgto
-    cell = pgto.M(
-        atom = '''C     0.      0.      0.    
-                  C     0.8917  0.8917  0.8917
-                  C     1.7834  1.7834  0.    
-                  C     2.6751  2.6751  0.8917
-                  C     1.7834  0.      1.7834
-                  C     2.6751  0.8917  2.6751
-                  C     0.      1.7834  1.7834
-                  C     0.8917  2.6751  2.6751''',
-        basis = {'C': gto.parse('''
-    # Parse NWChem format basis string (see https://bse.pnl.gov/bse/portal).
-    # Comment lines are ignored
-    #BASIS SET: (6s,3p) -> [2s,1p]
-    O    S
-        130.7093200              0.15432897       
-         23.8088610              0.53532814       
-          6.4436083              0.44463454       
-    O    SP
-          5.0331513             -0.09996723             0.15591627       
-          1.1695961              0.39951283             0.60768372       
-          0.3803890              0.70011547             0.39195739       
-                                    ''')},
-        pseudo = 'gth-pade',
-        a = numpy.eye(3)*3.5668,
-        ke_cutoff=1000 / 27)
-    
-    cell.build()
-    basis = plane_wave_basis(cell, 
-                             ke_cutoff = cell.ke_cutoff,
-                             n_kpts = [1, 1, 1],
-                             nl_pp_use_legendre = True)
-    print(basis.real_space_grid_dim)
