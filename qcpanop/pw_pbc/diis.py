@@ -73,7 +73,7 @@ class DIIS:
         Compute b-mat
         """
         dim = len(self.prev_vecs)
-        b = np.zeros((dim, dim))
+        b = np.zeros((dim, dim), dtype='complex128')
         for i, j in product(range(dim), repeat=2):
             if i <= j:
                 b[i, j] = self.edot(self.error_vecs[i], self.error_vecs[j])
@@ -93,10 +93,10 @@ class DIIS:
         :param e2: erorr vec2
         """
         if len(e1.shape) == 1 and len(e2.shape) == 1:
-            return e1.dot(e2)
+            return e1.conj().dot(e2)
         elif e1.shape[1] == 1 and e2.shape[1] == 1:
-            return e1.T.dot(e2)
+            return e1.conj().T.dot(e2)
         elif len(e1.shape) == 2 and len(e2.shape) == 2 and e1.shape == e2.shape:
-            return np.einsum('ij,ij', e1, e2)  # Tr[e1.T @ e2]
+            return np.einsum('ij,ij', e1.conj(), e2)  # Tr[e1.T @ e2]
         else:
             raise TypeError("Can't take dot of this type of error vec")
