@@ -79,6 +79,7 @@ class gth_pseudopotential_parameters():
             my_h = np.zeros((3, 3), dtype=hl.dtype)
             if nl > 0:
                 my_h[:hl.shape[0], :hl.shape[1]] = hl
+                maxi = 3
                 for i in range (0,3):
                     for j in range (0,3):
                         self.hgth[l, i, j] = my_h[i, j]
@@ -175,7 +176,10 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
 
     # spherical polar representation of plane wave basis 
     rgv, thetagv, phigv = pbcgto.pseudo.pp.cart2polar(gv)
-    
+
+    # rgv_test = np.sqrt(np.einsum('ik,ik->i', gv, gv))
+    # assert np.allclose(rgv_test, rgv) # ||k|| which will go into the projectors
+
     gmax = len(gv)
 
     # number of atoms
@@ -304,7 +308,6 @@ def get_nonlocal_pseudopotential_gth_legendre(SI, legendre, pg, gind, gth_params
         vsg += tmp_vsg * SI[center][gind] * SI[center][:].conj()
 
     return vsg / omega
-
 
 def get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = False):
 

@@ -6,6 +6,9 @@ plane wave basis information
 
 import numpy as np
 
+
+from pyscf.lib.numpy_helper import cartesian_prod
+
 from qcpanop.pw_pbc.pseudopotential import get_gth_pseudopotential_parameters
 
 def factor_integer(n):
@@ -77,7 +80,26 @@ def get_plane_wave_basis(ke_cutoff, a, b):
                     g2 = np.append(g2, g2tmp) 
 
                     # list of miller indices for G vectors
-                    miller = np.concatenate( (miller, np.expand_dims(np.array([i, j, k]), axis = 0) ) ) 
+                    miller = np.concatenate( (miller, np.expand_dims(np.array([i, j, k]), axis = 0) ) )
+
+    ## build all possible sets of miller indices
+    #ivals = np.arange(-reciprocal_max_dim_1, reciprocal_max_dim_1+1)
+    #jvals = np.arange(-reciprocal_max_dim_2, reciprocal_max_dim_2+1)
+    #kvals = np.arange(-reciprocal_max_dim_3, reciprocal_max_dim_3+1)
+    #ijk_vals = cartesian_prod([ivals, jvals, kvals])
+    ## get g-values i * b[0] + j * b[1] + k * b[2]
+    #gvals = ijk_vals @ b
+    ## compute g^2
+    #g2vals = np.einsum('ix,ix->i', gvals, gvals)
+    ## get items that are below cutoff
+    #density_cutoff_mask = np.where(g2vals/2 <= 4 * ke_cutoff)[0]
+    #gvals_below_cutoff = gvals[density_cutoff_mask]
+    #g2vals_below_cutoff = g2vals[density_cutoff_mask]
+    #miller_below_cutoff = ijk_vals[density_cutoff_mask]
+
+    #g = gvals_below_cutoff
+    #g2 = g2vals_below_cutoff
+    #miller = miller_below_cutoff
 
     # reciprocal_max_dim contains the maximum dimension for reciprocal basis
     reciprocal_max_dim = [int(np.amax(miller[:, 0])), int(np.amax(miller[:, 1])), int(np.amax(miller[:, 2]))]
@@ -86,14 +108,16 @@ def get_plane_wave_basis(ke_cutoff, a, b):
     real_space_grid_dim = [2 * reciprocal_max_dim[0] + 1, 2 * reciprocal_max_dim[1] + 1, 2 * reciprocal_max_dim[2] + 1]
 
     # miller_to_g maps the miller indices to the index of G
-    miller_to_g = np.ones(real_space_grid_dim, dtype = 'int') * 1000000
+    miller_to_g = np.ones(real_space_grid_dim, dtype = 'int')
     for i in range(len(g)):
         miller_to_g[miller[i, 0] + reciprocal_max_dim[0], miller[i, 1] + reciprocal_max_dim[1], miller[i, 2] + reciprocal_max_dim[2]] = i
 
     #increment the size of the real space grid until it is FFT-ready (only contains factors of 2, 3, or 5)
     for i in range( len(real_space_grid_dim) ):
-        while np.any(np.union1d( factor_integer(real_space_grid_dim[i]), [2, 3, 5]) != [2, 3, 5]):
+        union_factors = np.union1d( factor_integer(real_space_grid_dim[i]), [2, 3, 5])
+        while len(union_factors) > 3:
             real_space_grid_dim[i] += 1
+            union_factors = np.union1d( factor_integer(real_space_grid_dim[i]), [2, 3, 5])
 
     return g, g2, miller, reciprocal_max_dim, real_space_grid_dim, miller_to_g
 
@@ -120,7 +144,8 @@ def get_SI(cell, Gv=None):
 # plane wave basis information
 class plane_wave_basis():
 
-    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], nl_pp_use_legendre = False):
+    def __init__(self, cell, ke_cutoff = 18.374661240427326, n_kpts = [1, 1, 1], 
+            nl_pp_use_legendre = False, approximate_nl_pp = False):
 
         """
 
@@ -130,6 +155,7 @@ class plane_wave_basis():
         :param ke_cutoff: kinetic energy cutoff (in atomic units), default = 500 eV
         :param n_kpts: number of k-points
         :param nl_pp_use_legendre: use sum rule expression for spherical harmonics?
+        :param approximate_nl_pp: include only one projector per angular momentum
 
         members:
 
@@ -159,6 +185,7 @@ class plane_wave_basis():
         h = cell.reciprocal_vectors()
 
         self.nl_pp_use_legendre = nl_pp_use_legendre
+        self.approximate_nl_pp = approximate_nl_pp
 
         # get k-points
         self.kpts = cell.make_kpts(n_kpts, wrap_around = True)
@@ -186,6 +213,16 @@ class plane_wave_basis():
         self.gth_params = None
         if ( self.use_pseudopotential ):
             self.gth_params = get_gth_pseudopotential_parameters(cell)
+
+            # only one projector per angular momentum?
+            if self.approximate_nl_pp :
+                for center in range (0, len(cell._atom)):
+                    for l in range (0, 3):
+                        for i in range (0, 3):
+                            for j in range (0, 3):
+                                if i == j and i == 0 :
+                                    continue
+                                self.gth_params[center].hgth[l, i, j] = 0.0
 
         self.omega = np.linalg.det(cell.a)
 
@@ -223,7 +260,7 @@ def get_plane_waves_per_k(ke_cutoff, k, g):
                 n_plane_waves_per_k[i] += 1
 
     # kg_to_g maps basis for specific k-point to original plane wave basis
-    kg_to_g = np.ones((len(k), np.amax(n_plane_waves_per_k)), dtype = 'int') * 1000000
+    kg_to_g = np.ones((len(k), np.amax(n_plane_waves_per_k)), dtype = 'int')
 
     for i in range(len(k)):
         ind = 0
@@ -269,5 +306,4 @@ def get_miller_indices(idx, basis):
         m3 = m3 + basis.real_space_grid_dim[2]
 
     return m1, m2, m3
-
 
