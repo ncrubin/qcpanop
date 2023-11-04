@@ -8,9 +8,12 @@ plane wave scf
 import pylibxc
 
 # TODO: this thing shouldn't be global, and i should be able to select the functional
-#libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
-libxc_x_functional = pylibxc.LibXCFunctional("gga_x_pbe", "polarized")
-libxc_c_functional = pylibxc.LibXCFunctional("gga_c_pbe", "polarized")
+libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
+libxc_x_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
+libxc_c_functional = None
+functional_is_gga = False
+#libxc_x_functional = pylibxc.LibXCFunctional("gga_x_pbe", "polarized")
+#libxc_c_functional = pylibxc.LibXCFunctional("gga_c_pbe", "polarized")
 
 import numpy as np
 import scipy
@@ -226,99 +229,92 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
             "tau" : None
         }
 
-        # compute exchange functional
-        ret_x = libxc_x_functional.compute( inp )
-        vrho_x = ret_x['vrho']
-        vsigma_x = ret_x['vsigma']
+        tmp_alpha = np.zeros_like(rho_alpha)
+        tmp_beta = np.zeros_like(rho_beta)
 
-        # unpack vsigma_x
-        vsigma_x_aa = np.zeros_like(rho_alpha)
-        vsigma_x_ab = np.zeros_like(rho_alpha)
-        vsigma_x_bb = np.zeros_like(rho_alpha)
+        if libxc_x_functional is not None :
 
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
+            # compute exchange functional
+            ret_x = libxc_x_functional.compute( inp )
 
-                    vsigma_x_aa[i, j, k] = vsigma_x[count, 0]
-                    vsigma_x_ab[i, j, k] = vsigma_x[count, 1]
-                    vsigma_x_bb[i, j, k] = vsigma_x[count, 2]
+            vrho_x = ret_x['vrho']
+            tmp_alpha += vrho_x[:, 0].reshape(basis.real_space_grid_dim)
+            tmp_beta += vrho_x[:, 1].reshape(basis.real_space_grid_dim)
 
-                    count = count + 1
+            if functional_is_gga :
 
-        # additional derivatives involving vsigma_x
-        dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) / hx \
-                       + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) / hy \
-                       + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2) / hz
+                vsigma_x = ret_x['vsigma']
 
-        dvsigma_x_ab_a = np.gradient(vsigma_x_ab * drho_dx_alpha, axis=0) / hx \
-                       + np.gradient(vsigma_x_ab * drho_dy_alpha, axis=1) / hy \
-                       + np.gradient(vsigma_x_ab * drho_dz_alpha, axis=2) / hz
+                # unpack vsigma_x
+                vsigma_x_aa = vsigma_x[:, 0].reshape(basis.real_space_grid_dim)
+                vsigma_x_ab = vsigma_x[:, 1].reshape(basis.real_space_grid_dim)
+                vsigma_x_bb = vsigma_x[:, 2].reshape(basis.real_space_grid_dim)
 
-        dvsigma_x_ab_b = np.gradient(vsigma_x_ab * drho_dx_beta, axis=0) / hx \
-                       + np.gradient(vsigma_x_ab * drho_dy_beta, axis=1) / hy \
-                       + np.gradient(vsigma_x_ab * drho_dz_beta, axis=2) / hz
+                # additional derivatives involving vsigma_x
+                dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2) / hz
 
-        dvsigma_x_bb_b = np.gradient(vsigma_x_bb * drho_dx_beta, axis=0) / hx \
-                       + np.gradient(vsigma_x_bb * drho_dy_beta, axis=1) / hy \
-                       + np.gradient(vsigma_x_bb * drho_dz_beta, axis=2) / hz
+                dvsigma_x_ab_a = np.gradient(vsigma_x_ab * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_x_ab * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_x_ab * drho_dz_alpha, axis=2) / hz
 
-        # compute correlaction functional
-        ret_c = libxc_c_functional.compute( inp )
-        vrho_c = ret_c['vrho']
-        vsigma_c = ret_c['vsigma']
+                dvsigma_x_ab_b = np.gradient(vsigma_x_ab * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_x_ab * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_x_ab * drho_dz_beta, axis=2) / hz
 
-        # unpack vsigma_c
-        vsigma_c_aa = np.zeros_like(rho_alpha)
-        vsigma_c_ab = np.zeros_like(rho_alpha)
-        vsigma_c_bb = np.zeros_like(rho_alpha)
+                dvsigma_x_bb_b = np.gradient(vsigma_x_bb * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_x_bb * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_x_bb * drho_dz_beta, axis=2) / hz
 
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
+                tmp_alpha -= 2.0 * dvsigma_x_aa_a
+                tmp_alpha -= dvsigma_x_ab_b
 
-                    vsigma_c_aa[i, j, k] = vsigma_c[count, 0]
-                    vsigma_c_ab[i, j, k] = vsigma_c[count, 1]
-                    vsigma_c_bb[i, j, k] = vsigma_c[count, 2]
+                tmp_beta -= 2.0 * dvsigma_x_bb_b
+                tmp_beta -= dvsigma_x_ab_a
 
-                    count = count + 1
+        if libxc_c_functional is not None :
 
-        # additional derivatives involving vsigma_c
-        dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) / hx \
-                       + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) / hy \
-                       + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2) / hz
+            # compute correlaction functional
+            ret_c = libxc_c_functional.compute( inp )
+            vrho_c = ret_c['vrho']
 
-        dvsigma_c_ab_a = np.gradient(vsigma_c_ab * drho_dx_alpha, axis=0) / hx \
-                       + np.gradient(vsigma_c_ab * drho_dy_alpha, axis=1) / hy \
-                       + np.gradient(vsigma_c_ab * drho_dz_alpha, axis=2) / hz
+            tmp_alpha += vrho_c[:, 0].reshape(basis.real_space_grid_dim)
+            tmp_beta += vrho_c[:, 1].reshape(basis.real_space_grid_dim)
 
-        dvsigma_c_ab_b = np.gradient(vsigma_c_ab * drho_dx_beta, axis=0) / hx \
-                       + np.gradient(vsigma_c_ab * drho_dy_beta, axis=1) / hy \
-                       + np.gradient(vsigma_c_ab * drho_dz_beta, axis=2) / hz
+            if functional_is_gga :
+                vsigma_c = ret_c['vsigma']
 
-        dvsigma_c_bb_b = np.gradient(vsigma_c_bb * drho_dx_beta, axis=0) / hx \
-                       + np.gradient(vsigma_c_bb * drho_dy_beta, axis=1) / hy \
-                       + np.gradient(vsigma_c_bb * drho_dz_beta, axis=2) / hz
+                # unpack vsigma_c
+                vsigma_c_aa = vsigma_c[:, 0].reshape(basis.real_space_grid_dim)
+                vsigma_c_ab = vsigma_c[:, 1].reshape(basis.real_space_grid_dim)
+                vsigma_c_bb = vsigma_c[:, 2].reshape(basis.real_space_grid_dim)
 
-        # unpack v_xc(r) and fourier transform
-        vrho = ret['vrho']
-        tmp_alpha = vrho[:, 0].reshape(basis.real_space_grid_dim)
-        tmp_beta = vrho[:, 1].reshape(basis.real_space_grid_dim)
+                # additional derivatives involving vsigma_c
+                dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2) / hz
 
-        tmp_alpha -= 2.0 * dvsigma_x_aa_a
-        tmp_alpha -= dvsigma_x_ab_b
+                dvsigma_c_ab_a = np.gradient(vsigma_c_ab * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_c_ab * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_c_ab * drho_dz_alpha, axis=2) / hz
 
-        tmp_alpha -= 2.0 * dvsigma_c_aa_a
-        tmp_alpha -= dvsigma_c_ab_b
+                dvsigma_c_ab_b = np.gradient(vsigma_c_ab * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_c_ab * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_c_ab * drho_dz_beta, axis=2) / hz
 
-        tmp_beta -= 2.0 * dvsigma_x_bb_b
-        tmp_beta -= dvsigma_x_ab_a
+                dvsigma_c_bb_b = np.gradient(vsigma_c_bb * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_c_bb * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_c_bb * drho_dz_beta, axis=2) / hz
 
-        tmp_beta -= 2.0 * dvsigma_c_bb_b
-        tmp_beta -= dvsigma_c_ab_a
+                tmp_alpha -= 2.0 * dvsigma_c_aa_a
+                tmp_alpha -= dvsigma_c_ab_b
 
+                tmp_beta -= 2.0 * dvsigma_c_bb_b
+                tmp_beta -= dvsigma_c_ab_a
+
+
+        # fourier transform v_xc(r)
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
 
@@ -416,18 +412,19 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
             "tau" : None
         }
 
-        # compute exchange functional
-        ret_x = libxc_x_functional.compute( inp, do_vxc = False )
-        zk_x = ret_x['zk']
+        val = np.zeros_like(rho_alpha.flatten())
 
-        # compute correlation functional
-        ret_c = libxc_c_functional.compute( inp, do_vxc = False )
-        zk_c = ret_c['zk']
+        if libxc_x_functional is not None :
+            # compute exchange functional
+            ret_x = libxc_x_functional.compute( inp, do_vxc = False )
+            zk_x = ret_x['zk']
+            val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_x.flatten()
 
-        # evaluate xc functional
-
-        val = (rho_alpha.flatten() + rho_beta.flatten() ) * zk_x.flatten()
-        val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_c.flatten()
+        if libxc_c_functional is not None :
+            # compute correlation functional
+            ret_c = libxc_c_functional.compute( inp, do_vxc = False )
+            zk_c = ret_c['zk']
+            val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_c.flatten()
 
         xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
 
@@ -714,7 +711,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     maxiter = 500
 
     # density in reciprocal space
-    rhog = np.zeros(len(basis.g), dtype = 'float64')
+    rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
     # charges
     valence_charges = cell.atom_charges()
@@ -951,7 +948,6 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
             coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
 
         rho = rho_a + rho_b
-
 
         if xc == 'lda':
 
