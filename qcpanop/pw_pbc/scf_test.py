@@ -2,6 +2,7 @@
 test functions in pw-code
 """
 import numpy as np
+import warnings
 
 import ase
 from ase.build import bulk
@@ -11,6 +12,8 @@ from pyscf.pbc import gto, scf
 
 
 from qcpanop.pw_pbc.basis import plane_wave_basis
+
+from qcpanop.pw_pbc.scf import uks
 
 
 def test_format_density_for_libxc():
@@ -88,7 +91,85 @@ def test_format_density_for_libxc():
 
 
 
+def test_correct_num_elec():
+    ase_atom = bulk('C', 'diamond', a = 6.74)
+    #ase_atom = bulk('H', 'diamond', a = 8.88)
+    #ase_atom = bulk('Ne', 'diamond', a = 10.26)
+
+    atom = pyscf_ase.ase_atoms_to_pyscf(ase_atom)
+    a = ase_atom.cell 
+    
+    cell = gto.M(a = a,
+                 atom = atom,
+                 unit = 'bohr',
+                 basis = 'cc-pvqz',
+                 pseudo = 'gth-blyp',
+                 verbose = 0,
+                 ke_cutoff = 5000 / 27.21138602,
+                 precision = 1.0e-8,
+                 charge = 0,
+                 spin = 0,
+                 dimension = 3)
+    
+    cell.build()
+
+    # get plane wave basis information
+    basis = plane_wave_basis(cell, 
+                             ke_cutoff = 1000.0 / 27.21138602, 
+                             n_kpts = [1, 1, 1],
+                             nl_pp_use_legendre = True)
+
+
+    _, Ca, Cb = uks(cell, basis, 
+        xc = 'lda', 
+        guess_mix = True, 
+        e_convergence = 1e-8, 
+        d_convergence = 1e-6, 
+        diis_dimension = 8, 
+        damp_fock = True, 
+        damping_iterations = 8,
+        maxiter=3)
+    na = Ca[0].shape[1]
+    nb = Cb[0].shape[1]
+
+    assert na + nb == cell.nelectron
+    assert na - nb == cell.spin
+
+    cell = gto.M(a = a,
+                 atom = atom,
+                 unit = 'bohr',
+                 basis = 'cc-pvqz',
+                 pseudo = 'gth-blyp',
+                 verbose = 0,
+                 ke_cutoff = 5000 / 27.21138602,
+                 precision = 1.0e-8,
+                 charge = 1,
+                 spin = 0,
+                 dimension = 3)
+    
+    cell.build()
+    print(cell.nelectron)
+
+    basis = plane_wave_basis(cell, 
+                             ke_cutoff = 1000.0 / 27.21138602, 
+                             n_kpts = [1, 1, 1],
+                             nl_pp_use_legendre = True)
+
+    # the correct number of electrons will not be correct
+    _, Ca, Cb = uks(cell, basis, 
+        xc = 'lda', 
+        guess_mix = True, 
+        e_convergence = 1e-8, 
+        d_convergence = 1e-6, 
+        diis_dimension = 8, 
+        damp_fock = True, 
+        damping_iterations = 8,
+        maxiter=3)
+    na = Ca[0].shape[1]
+    nb = Cb[0].shape[1]
+    assert na + nb != cell.nelectron
 
 
 if __name__ == "__main__":
-    test_format_density_for_libxc()
+    # test_format_density_for_libxc()
+    test_correct_num_elec()

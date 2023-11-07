@@ -13,6 +13,8 @@ functional_name_dict = {
     'pbe' : ['gga_x_pbe', 'gga_c_pbe']
 } 
 
+
+import warnings
 import numpy as np
 import scipy
 
@@ -646,7 +648,8 @@ def uks(cell, basis,
         d_convergence = 1e-6, 
         diis_dimension = 8, 
         damp_fock = True, 
-        damping_iterations = 8):
+        damping_iterations = 8,
+        maxiter=500):
 
     """
 
@@ -660,6 +663,7 @@ def uks(cell, basis,
     :param d_convergence: the convergence in the orbital gradient
     :param damp_fock: do dampen fock matrix?
     :param damping_iterations: for how many iterations should we dampen the fock matrix
+    :param maxiter: maximum number of scf iterations
     :return total energy
     :return Calpha: alpha MO coefficients
     :return Cbeta: beta MO coefficients
@@ -697,9 +701,6 @@ def uks(cell, basis,
     exchange_matrix_alpha = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
     exchange_matrix_beta = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
 
-    # maximum number of iterations
-    maxiter = 500
-
     # density in reciprocal space
     rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
@@ -720,15 +721,8 @@ def uks(cell, basis,
     # madelung correction
     madelung = tools.pbc.madelung(cell, basis.kpts)
 
-    # number of alpha and beta bands
-    total_charge = 0
-    for I in range ( len(valence_charges) ):
-        total_charge += valence_charges[I]
-
-    total_charge -= basis.charge
-
-    nbeta = int(total_charge / 2)
-    nalpha = total_charge - nbeta
+    nalpha, nbeta = cell.nelec
+    total_charge = cell.charge
 
     # damp fock matrix (helps with convergence sometimes)
     damping_factor = 1.0
@@ -790,7 +784,11 @@ def uks(cell, basis,
     adiis.space = diis_dimension
 
     # begin UKS iterations
-    for scf_iter in range(0, maxiter):
+    scf_iter = 0 # initialize variable incase maxiter = 0
+    one_electron_energy = 0.0
+    coulomb_energy = 0.0
+    xc_energy = 0.0
+    for scf_iter in range(maxiter):
 
         occ_alpha = []
         occ_beta = []
@@ -1071,15 +1069,7 @@ def uks_energy(cell, basis, Calpha, Cbeta, xc = 'lda'):
     # madelung correction
     madelung = tools.pbc.madelung(cell, basis.kpts)
 
-    # number of alpha and beta bands
-    total_charge = 0
-    for I in range ( len(valence_charges) ):
-        total_charge += valence_charges[I]
-
-    total_charge -= basis.charge
-
-    nbeta = int(total_charge / 2)
-    nalpha = total_charge - nbeta
+    nalpha, nbeta = cell.nelec
 
     # build density
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
