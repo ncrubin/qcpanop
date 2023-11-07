@@ -335,47 +335,48 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_fu
 
     xc_energy = 0.0
 
-    # TODO: need logic to prevent evaluating gradient for lda
-
     # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
     combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
     combined_rho[::2] = rho_alpha.ravel(order='C')
     combined_rho[1::2] = rho_beta.ravel(order='C')
 
     # contracted gradient: del rho . del rho as [aa[0], ab[0], bb[0], aa[1], etc.]
-    contracted_gradient = np.zeros( [3 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
+    contracted_gradient = None
 
-    # box size
-    a = basis.a
-    xdim = np.linalg.norm(a[0]) 
-    ydim = np.linalg.norm(a[1]) 
-    zdim = np.linalg.norm(a[2]) 
-    
-    hx = xdim / basis.real_space_grid_dim[0]
-    hy = ydim / basis.real_space_grid_dim[1]
-    hz = zdim / basis.real_space_grid_dim[2]
+    # TODO: logic should be updated once we support more functionals
+    if libxc_x_functional != 'lda_x' and libxc_c_functional != None :
 
-    drho_dx_alpha = np.gradient(rho_alpha, axis=0) / hx
-    drho_dy_alpha = np.gradient(rho_alpha, axis=1) / hy
-    drho_dz_alpha = np.gradient(rho_alpha, axis=2) / hz
+        # box size
+        a = basis.a
+        xdim = np.linalg.norm(a[0]) 
+        ydim = np.linalg.norm(a[1]) 
+        zdim = np.linalg.norm(a[2]) 
+        
+        hx = xdim / basis.real_space_grid_dim[0]
+        hy = ydim / basis.real_space_grid_dim[1]
+        hz = zdim / basis.real_space_grid_dim[2]
 
-    drho_dx_beta = np.gradient(rho_beta, axis=0) / hx
-    drho_dy_beta = np.gradient(rho_beta, axis=1) / hy
-    drho_dz_beta = np.gradient(rho_beta, axis=2) / hz
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0) / hx
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1) / hy
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2) / hz
 
-    tmp_aa = drho_dx_alpha * drho_dx_alpha \
-           + drho_dy_alpha * drho_dy_alpha \
-           + drho_dz_alpha * drho_dz_alpha
+        drho_dx_beta = np.gradient(rho_beta, axis=0) / hx
+        drho_dy_beta = np.gradient(rho_beta, axis=1) / hy
+        drho_dz_beta = np.gradient(rho_beta, axis=2) / hz
 
-    tmp_ab = drho_dx_alpha * drho_dx_beta \
-           + drho_dy_alpha * drho_dy_beta \
-           + drho_dz_alpha * drho_dz_beta
+        tmp_aa = drho_dx_alpha * drho_dx_alpha \
+               + drho_dy_alpha * drho_dy_alpha \
+               + drho_dz_alpha * drho_dz_alpha
 
-    tmp_bb = drho_dx_beta * drho_dx_beta \
-           + drho_dy_beta * drho_dy_beta \
-           + drho_dz_beta * drho_dz_beta
+        tmp_ab = drho_dx_alpha * drho_dx_beta \
+               + drho_dy_alpha * drho_dy_beta \
+               + drho_dz_alpha * drho_dz_beta
 
-    contracted_gradient = np.array(list(zip(tmp_aa.flatten(), tmp_ab.flatten(), tmp_bb.flatten())))
+        tmp_bb = drho_dx_beta * drho_dx_beta \
+               + drho_dy_beta * drho_dy_beta \
+               + drho_dz_beta * drho_dz_beta
+
+        contracted_gradient = np.array(list(zip(tmp_aa.flatten(), tmp_ab.flatten(), tmp_bb.flatten())))
 
     inp = {
         "rho" : combined_rho,
