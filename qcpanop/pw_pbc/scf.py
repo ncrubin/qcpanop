@@ -667,7 +667,14 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     return coulomb_energy
 
-def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock = True, damping_iterations = 8):
+def uks(cell, basis, 
+        xc = 'lda', 
+        guess_mix = True, 
+        e_convergence = 1e-8, 
+        d_convergence = 1e-6, 
+        diis_dimension = 8, 
+        damp_fock = True, 
+        damping_iterations = 8):
 
     """
 
@@ -677,8 +684,13 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     :param basis: plane wave basis information
     :param xc: the exchange-correlation functional
     :param guess_mix: do mix alpha homo and lumo to break spin symmetry?
+    :param e_convergence: the convergence in the energy
+    :param d_convergence: the convergence in the orbital gradient
     :param damp_fock: do dampen fock matrix?
     :param damping_iterations: for how many iterations should we dampen the fock matrix
+    :return total energy
+    :return Calpha: alpha MO coefficients
+    :return Cbeta: beta MO coefficients
 
     """
  
@@ -756,6 +768,10 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     diis_start_cycle = 4
 
     print("")
+    print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
+    print('    correlation functional:                      %20s' % ( functional_name_dict[xc][1] ) )
+    print('    e_convergence:                               %20.2e' % ( e_convergence ) )
+    print('    d_convergence:                               %20.2e' % ( d_convergence ) )
     print('    no. k-points:                                %20i' % ( len(basis.kpts) ) )
     print('    KE cutoff (eV)                               %20.2f' % ( basis.ke_cutoff * 27.21138602 ) )
     print('    no. basis functions (orbitals, gamma point): %20i' % ( basis.n_plane_waves_per_k[0] ) )
@@ -999,7 +1015,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
 
         print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge ) )
 
-        if ( conv < 1e-4 and energy_diff < 1e-5 ) :
+        if ( conv < d_convergence and energy_diff < e_convergence ) :
             break
 
     if scf_iter == maxiter - 1:
@@ -1023,4 +1039,179 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
 
     #assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
 
+    return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, Calpha, Cbeta
+
+def uks_energy(cell, basis, Calpha, Cbeta, xc = 'lda'):
+
+    """
+
+    evaluate the uks energy for a given set of MO coefficients
+
+    :param cell: the unit cell
+    :param basis: plane wave basis information
+    :param Calpha: alpha MO coefficients
+    :param Cbeta: beta MO coefficients
+    :param xc: the exchange-correlation functional
+
+    :return total energy
+    """
+
+    if xc != 'lda' and xc != 'pbe' and xc != 'hf' :
+        raise Exception("uks only supports xc = 'lda' and 'hf' for now")
+
+    libxc_x_functional = None
+    libxc_c_functional = None
+
+    if functional_name_dict[xc][0] is not None :
+        libxc_x_functional = pylibxc.LibXCFunctional(functional_name_dict[xc][0], "polarized")
+
+    if functional_name_dict[xc][1] is not None :
+        libxc_c_functional = pylibxc.LibXCFunctional(functional_name_dict[xc][1], "polarized")
+
+    # get nuclear repulsion energy
+    enuc = cell.energy_nuc()
+
+    # coulomb and xc potentials in reciprocal space
+    v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
+
+    exchange_matrix_alpha = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+    exchange_matrix_beta = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+
+    # density in reciprocal space
+    rhog = np.zeros(len(basis.g), dtype = 'complex128')
+
+    # charges
+    valence_charges = cell.atom_charges()
+
+    if basis.use_pseudopotential:
+        for i in range (0,len(valence_charges)):
+            valence_charges[i] = int(basis.gth_params[i].Zion)
+
+    # electron-nucleus potential
+    v_ne = None
+    if not basis.use_pseudopotential:
+        v_ne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
+    else :
+        v_ne = get_local_pseudopotential_gth(basis)
+
+    # madelung correction
+    madelung = tools.pbc.madelung(cell, basis.kpts)
+
+    # number of alpha and beta bands
+    total_charge = 0
+    for I in range ( len(valence_charges) ):
+        total_charge += valence_charges[I]
+
+    total_charge -= basis.charge
+
+    nbeta = int(total_charge / 2)
+    nalpha = total_charge - nbeta
+
+    # build density
+    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    rho_a = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_b = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    for kid in range ( len(basis.kpts) ):
+
+        # density
+        my_rho_a, occ_alpha = get_density(basis, Calpha[kid], nalpha, kid)
+        my_rho_b, occ_beta = get_density(basis, Cbeta[kid], nbeta, kid)
+
+        # density should be non-negative ...
+        rho_a += my_rho_a.clip(min = 0)
+        rho_b += my_rho_b.clip(min = 0)
+
+    # total density
+    rho = rho_a + rho_b
+
+    # coulomb potential
+    tmp = np.fft.ifftn(rho)
+    for myg in range( len(basis.g) ):
+        rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+    v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
+
+    occ_alpha = []
+    occ_beta = []
+
+    # exchange-correlation potential
+    if xc != 'hf' :
+
+        v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_a, rho_b, libxc_x_functional, libxc_c_functional)
+
+    else :
+
+        dum, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+        if nbeta > 0:
+            dum, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+
+    # total potential
+
+    if xc != 'hf' :
+        va = v_coulomb + v_ne + v_xc_alpha
+        vb = v_coulomb + v_ne + v_xc_beta
+    else :
+        va = v_coulomb + v_ne
+        vb = v_coulomb + v_ne
+
+    # accumulate energy
+
+    if xc != 'hf':
+
+        xc_energy = get_xc_energy(xc, basis, rho_a, rho_b, libxc_x_functional, libxc_c_functional)
+
+    else :
+
+        # TODO: fix for general k
+        print()
+        print("uks_energy() only supports xc = 'lda' for now")
+        print()
+        exit()
+        xc_energy, v_xc = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+        if nbeta > 0:
+            my_xc_energy, v_xc = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+            xc_energy += my_xc_energy
+
+        xc_energy -= 0.5 * (nalpha + nbeta) * madelung
+
+    one_electron_energy = 0.0
+    coulomb_energy = 0.0
+
+    for kid in range ( len(basis.kpts) ):
+
+        # one-electron part of the energy (alpha)
+        one_electron_energy += get_one_electron_energy(basis,
+                                                       Calpha[kid],
+                                                       nalpha,
+                                                       kid,
+                                                       v_ne = v_ne)
+
+        # one-electron part of the energy (beta)
+        one_electron_energy += get_one_electron_energy(basis,
+                                                       Cbeta[kid],
+                                                       nbeta,
+                                                       kid,
+                                                       v_ne = v_ne)
+
+        # coulomb part of the energy: 1/2 J
+        coulomb_energy += get_coulomb_energy(basis, Calpha[kid], nalpha, kid, v_coulomb)
+
+        # coulomb part of the energy: 1/2 J
+        coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
+
+    print('    ==> energy components <==')
+    print('')
+    print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
+    print('    one-electron energy:      %20.12lf' % ( np.real(one_electron_energy) ) )
+    print('    coulomb energy:           %20.12lf' % ( np.real(coulomb_energy) ) )
+    print('    xc energy:                %20.12lf' % ( np.real(xc_energy) ) )
+    print('')
+    print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
+    print('')
+
     return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
+
