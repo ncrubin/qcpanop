@@ -7,8 +7,11 @@ plane wave scf
 # libxc
 import pylibxc
 
-# TODO: this thing shouldn't be global, and i should be able to select the functional
-libxc_functional = pylibxc.LibXCFunctional("lda_x", "polarized")
+# TODO: this dictionary is incomplete and shouldn't be global
+functional_name_dict = {
+    'lda' : ['lda_x', None],
+    'pbe' : ['gga_x_pbe', 'gga_c_pbe']
+} 
 
 import numpy as np
 import scipy
@@ -143,7 +146,7 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
 
     return -2.0 * np.pi / basis.omega * exchange_energy, -4.0 * np.pi / basis.omega * exchange_matrix
 
-def get_xc_potential(xc, basis, rho_alpha, rho_beta):
+def get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional):
     """
 
     evaluate the exchange-correlation energy
@@ -152,6 +155,8 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
     :param basis: plane wave basis information
     :param rho_alpha: the alpha spin density (real space)
     :param rho_beta: the beta spin density (real space)
+    :param libxc_x_functional: the exchange functional
+    :param libxc_c_functional: the correlation functional
     :return xc_alpha: the exchange-correlation energy (alpha)
     :return xc_beta: the exchange-correlation energy (beta)
 
@@ -161,28 +166,142 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
     v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
     v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
 
-    if xc == 'lda' :
-
-        ## LSDA potential 
-        #cx = - 3.0 / 4.0 * ( 3.0 / np.pi )**( 1.0 / 3.0 )
-        #vr = 4.0 / 3.0 * cx * 2.0 ** ( 1.0 / 3.0 ) * np.power( rho , 1.0 / 3.0 )
-
-        #tmp = np.fft.ifftn(vr)
-        #for myg in range( len(basis.g) ):
-        #    v_xc[myg] = tmp[ get_miller_indices(myg, basis) ]
+    if xc != 'hf' :
 
         # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
         combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
         combined_rho[::2] = rho_alpha.ravel(order='C')
         combined_rho[1::2] = rho_beta.ravel(order='C')
 
-        # compute
-        ret = libxc_functional.compute( combined_rho )
+        # contracted gradient: del rho . del rho as [aa[0], ab[0], bb[0], aa[1], etc.]
+        contracted_gradient = np.zeros( [3 * basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2]] )
 
-        # unpack v_xc(r) and fourier transform
-        vrho = ret['vrho']
-        tmp_alpha = vrho[:, 0].reshape(basis.real_space_grid_dim)
-        tmp_beta = vrho[:, 1].reshape(basis.real_space_grid_dim)
+        # box size
+        a = basis.a
+        xdim = np.linalg.norm(a[0]) 
+        ydim = np.linalg.norm(a[1]) 
+        zdim = np.linalg.norm(a[2]) 
+
+        hx = xdim / basis.real_space_grid_dim[0] 
+        hy = ydim / basis.real_space_grid_dim[1] 
+        hz = zdim / basis.real_space_grid_dim[2] 
+
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0) / hx
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1) / hy
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2) / hz
+
+        drho_dx_beta = np.gradient(rho_beta, axis=0) / hx
+        drho_dy_beta = np.gradient(rho_beta, axis=1) / hy
+        drho_dz_beta = np.gradient(rho_beta, axis=2) / hz
+
+        tmp_aa = drho_dx_alpha * drho_dx_alpha \
+               + drho_dy_alpha * drho_dy_alpha \
+               + drho_dz_alpha * drho_dz_alpha
+
+        tmp_ab = drho_dx_alpha * drho_dx_beta \
+               + drho_dy_alpha * drho_dy_beta \
+               + drho_dz_alpha * drho_dz_beta
+
+        tmp_bb = drho_dx_beta * drho_dx_beta \
+               + drho_dy_beta * drho_dy_beta \
+               + drho_dz_beta * drho_dz_beta
+
+        contracted_gradient = np.array(list(zip(tmp_aa.flatten(), tmp_ab.flatten(), tmp_bb.flatten())))
+
+        inp = {
+            "rho" : combined_rho,
+            "sigma" : contracted_gradient,
+            "lapl" : None,
+            "tau" : None
+        }
+
+        tmp_alpha = np.zeros_like(rho_alpha)
+        tmp_beta = np.zeros_like(rho_beta)
+
+        if libxc_x_functional is not None :
+
+            # compute exchange functional
+            ret_x = libxc_x_functional.compute( inp )
+
+            vrho_x = ret_x['vrho']
+            tmp_alpha += vrho_x[:, 0].reshape(basis.real_space_grid_dim)
+            tmp_beta += vrho_x[:, 1].reshape(basis.real_space_grid_dim)
+
+            if 'vsigma' in ret_x :
+
+                vsigma_x = ret_x['vsigma']
+
+                # unpack vsigma_x
+                vsigma_x_aa = vsigma_x[:, 0].reshape(basis.real_space_grid_dim)
+                vsigma_x_ab = vsigma_x[:, 1].reshape(basis.real_space_grid_dim)
+                vsigma_x_bb = vsigma_x[:, 2].reshape(basis.real_space_grid_dim)
+
+                # additional derivatives involving vsigma_x
+                dvsigma_x_aa_a = np.gradient(vsigma_x_aa * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_x_aa * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_x_aa * drho_dz_alpha, axis=2) / hz
+
+                dvsigma_x_ab_a = np.gradient(vsigma_x_ab * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_x_ab * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_x_ab * drho_dz_alpha, axis=2) / hz
+
+                dvsigma_x_ab_b = np.gradient(vsigma_x_ab * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_x_ab * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_x_ab * drho_dz_beta, axis=2) / hz
+
+                dvsigma_x_bb_b = np.gradient(vsigma_x_bb * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_x_bb * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_x_bb * drho_dz_beta, axis=2) / hz
+
+                tmp_alpha -= 2.0 * dvsigma_x_aa_a
+                tmp_alpha -= dvsigma_x_ab_b
+
+                tmp_beta -= 2.0 * dvsigma_x_bb_b
+                tmp_beta -= dvsigma_x_ab_a
+
+        if libxc_c_functional is not None :
+
+            # compute correlaction functional
+            ret_c = libxc_c_functional.compute( inp )
+            vrho_c = ret_c['vrho']
+
+            tmp_alpha += vrho_c[:, 0].reshape(basis.real_space_grid_dim)
+            tmp_beta += vrho_c[:, 1].reshape(basis.real_space_grid_dim)
+
+            if 'vsigma' in ret_c :
+
+                vsigma_c = ret_c['vsigma']
+
+                # unpack vsigma_c
+                vsigma_c_aa = vsigma_c[:, 0].reshape(basis.real_space_grid_dim)
+                vsigma_c_ab = vsigma_c[:, 1].reshape(basis.real_space_grid_dim)
+                vsigma_c_bb = vsigma_c[:, 2].reshape(basis.real_space_grid_dim)
+
+                # additional derivatives involving vsigma_c
+                dvsigma_c_aa_a = np.gradient(vsigma_c_aa * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_c_aa * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_c_aa * drho_dz_alpha, axis=2) / hz
+
+                dvsigma_c_ab_a = np.gradient(vsigma_c_ab * drho_dx_alpha, axis=0) / hx \
+                               + np.gradient(vsigma_c_ab * drho_dy_alpha, axis=1) / hy \
+                               + np.gradient(vsigma_c_ab * drho_dz_alpha, axis=2) / hz
+
+                dvsigma_c_ab_b = np.gradient(vsigma_c_ab * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_c_ab * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_c_ab * drho_dz_beta, axis=2) / hz
+
+                dvsigma_c_bb_b = np.gradient(vsigma_c_bb * drho_dx_beta, axis=0) / hx \
+                               + np.gradient(vsigma_c_bb * drho_dy_beta, axis=1) / hy \
+                               + np.gradient(vsigma_c_bb * drho_dz_beta, axis=2) / hz
+
+                tmp_alpha -= 2.0 * dvsigma_c_aa_a
+                tmp_alpha -= dvsigma_c_ab_b
+
+                tmp_beta -= 2.0 * dvsigma_c_bb_b
+                tmp_beta -= dvsigma_c_ab_a
+
+
+        # fourier transform v_xc(r)
         tmp_alpha = np.fft.ifftn(tmp_alpha)
         tmp_beta = np.fft.ifftn(tmp_beta)
 
@@ -191,19 +310,16 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta):
             v_xc_alpha[myg] = tmp_alpha[ get_miller_indices(myg, basis) ]
             v_xc_beta[myg] = tmp_beta[ get_miller_indices(myg, basis) ]
 
-    elif xc == 'hf' :
+    else :
 
         pass
 
         # TODO: fix for general k
         #xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
 
-    else:
-        raise Exception("unsupported xc functional")
-
     return v_xc_alpha, v_xc_beta
 
-def get_xc_energy(xc, basis, rho_alpha, rho_beta): 
+def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional): 
     """
 
     evaluate the exchange-correlation energy
@@ -212,26 +328,78 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta):
     :param basis: plane wave basis information
     :param rho_alpha: the alpha spin density (real space)
     :param rho_beta: the beta spin density (real space)
+    :param libxc_x_functional: the exchange functional
+    :param libxc_c_functional: the correlation functional
 
     """
 
     xc_energy = 0.0
 
-    if xc == 'lda':
+    # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
+    combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
+    combined_rho[::2] = rho_alpha.ravel(order='C')
+    combined_rho[1::2] = rho_beta.ravel(order='C')
 
-        # libxc wants a list of density elements [alpha[0], beta[0], alpha[1], beta[1], etc.]
-        combined_rho = np.zeros((2 * np.prod(basis.real_space_grid_dim[:3])))
-        combined_rho[::2] = rho_alpha.ravel(order='C')
-        combined_rho[1::2] = rho_beta.ravel(order='C')
+    # contracted gradient: del rho . del rho as [aa[0], ab[0], bb[0], aa[1], etc.]
+    contracted_gradient = None
 
-        # compute
-        ret = libxc_functional.compute( combined_rho , do_vxc = False)
-        zk = ret['zk']
-        val = (rho_alpha.flatten() + rho_beta.flatten() ) * zk.flatten()
-        xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
+    # TODO: logic should be updated once we support more functionals
+    if libxc_x_functional != 'lda_x' and libxc_c_functional != None :
 
-    else:
-        raise Exception("unsupported xc functional")
+        # box size
+        a = basis.a
+        xdim = np.linalg.norm(a[0]) 
+        ydim = np.linalg.norm(a[1]) 
+        zdim = np.linalg.norm(a[2]) 
+        
+        hx = xdim / basis.real_space_grid_dim[0]
+        hy = ydim / basis.real_space_grid_dim[1]
+        hz = zdim / basis.real_space_grid_dim[2]
+
+        drho_dx_alpha = np.gradient(rho_alpha, axis=0) / hx
+        drho_dy_alpha = np.gradient(rho_alpha, axis=1) / hy
+        drho_dz_alpha = np.gradient(rho_alpha, axis=2) / hz
+
+        drho_dx_beta = np.gradient(rho_beta, axis=0) / hx
+        drho_dy_beta = np.gradient(rho_beta, axis=1) / hy
+        drho_dz_beta = np.gradient(rho_beta, axis=2) / hz
+
+        tmp_aa = drho_dx_alpha * drho_dx_alpha \
+               + drho_dy_alpha * drho_dy_alpha \
+               + drho_dz_alpha * drho_dz_alpha
+
+        tmp_ab = drho_dx_alpha * drho_dx_beta \
+               + drho_dy_alpha * drho_dy_beta \
+               + drho_dz_alpha * drho_dz_beta
+
+        tmp_bb = drho_dx_beta * drho_dx_beta \
+               + drho_dy_beta * drho_dy_beta \
+               + drho_dz_beta * drho_dz_beta
+
+        contracted_gradient = np.array(list(zip(tmp_aa.flatten(), tmp_ab.flatten(), tmp_bb.flatten())))
+
+    inp = {
+        "rho" : combined_rho,
+        "sigma" : contracted_gradient,
+        "lapl" : None,
+        "tau" : None
+    }
+
+    val = np.zeros_like(rho_alpha.flatten())
+
+    # compute exchange functional
+    if libxc_x_functional is not None :
+        ret_x = libxc_x_functional.compute( inp, do_vxc = False )
+        zk_x = ret_x['zk']
+        val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_x.flatten()
+
+    # compute correlation functional
+    if libxc_c_functional is not None :
+        ret_c = libxc_c_functional.compute( inp, do_vxc = False )
+        zk_c = ret_c['zk']
+        val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_c.flatten()
+
+    xc_energy = val.sum() * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) )
 
     return xc_energy
 
@@ -471,7 +639,14 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     return coulomb_energy
 
-def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock = True, damping_iterations = 8):
+def uks(cell, basis, 
+        xc = 'lda', 
+        guess_mix = True, 
+        e_convergence = 1e-8, 
+        d_convergence = 1e-6, 
+        diis_dimension = 8, 
+        damp_fock = True, 
+        damping_iterations = 8):
 
     """
 
@@ -481,8 +656,13 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     :param basis: plane wave basis information
     :param xc: the exchange-correlation functional
     :param guess_mix: do mix alpha homo and lumo to break spin symmetry?
+    :param e_convergence: the convergence in the energy
+    :param d_convergence: the convergence in the orbital gradient
     :param damp_fock: do dampen fock matrix?
     :param damping_iterations: for how many iterations should we dampen the fock matrix
+    :return total energy
+    :return Calpha: alpha MO coefficients
+    :return Cbeta: beta MO coefficients
 
     """
  
@@ -494,9 +674,17 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     print('    ************************************************')
     print('')
 
-    if xc != 'lda' and xc != 'hf':
+    if xc != 'lda' and xc != 'pbe' and xc != 'hf' :
         raise Exception("uks only supports xc = 'lda' and 'hf' for now")
 
+    libxc_x_functional = None
+    libxc_c_functional = None
+
+    if functional_name_dict[xc][0] is not None :
+        libxc_x_functional = pylibxc.LibXCFunctional(functional_name_dict[xc][0], "polarized")
+
+    if functional_name_dict[xc][1] is not None :
+        libxc_c_functional = pylibxc.LibXCFunctional(functional_name_dict[xc][1], "polarized")
 
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
@@ -513,7 +701,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     maxiter = 500
 
     # density in reciprocal space
-    rhog = np.zeros(len(basis.g), dtype = 'float64')
+    rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
     # charges
     valence_charges = cell.atom_charges()
@@ -552,6 +740,10 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
     diis_start_cycle = 4
 
     print("")
+    print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
+    print('    correlation functional:                      %20s' % ( functional_name_dict[xc][1] ) )
+    print('    e_convergence:                               %20.2e' % ( e_convergence ) )
+    print('    d_convergence:                               %20.2e' % ( d_convergence ) )
     print('    no. k-points:                                %20i' % ( len(basis.kpts) ) )
     print('    KE cutoff (eV)                               %20.2f' % ( basis.ke_cutoff * 27.21138602 ) )
     print('    no. basis functions (orbitals, gamma point): %20i' % ( basis.n_plane_waves_per_k[0] ) )
@@ -606,14 +798,12 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
         one_electron_energy = 0.0
         coulomb_energy = 0.0
 
-        if xc == 'lda' :
+        if xc != 'hf' :
             va = v_coulomb + v_ne + v_xc_alpha
             vb = v_coulomb + v_ne + v_xc_beta
-        elif xc == 'hf' :
+        else :
             va = v_coulomb + v_ne 
             vb = v_coulomb + v_ne 
-        else:
-            raise Exception("unsupported xc functional")
 
         # zero density for this iteration
         rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
@@ -751,12 +941,11 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
 
         rho = rho_a + rho_b
 
+        if xc != 'hf':
 
-        if xc == 'lda':
+            xc_energy = get_xc_energy(xc, basis, rho_a, rho_b, libxc_x_functional, libxc_c_functional)
 
-            xc_energy = get_xc_energy(xc, basis, rho_a, rho_b)
-
-        if xc == 'hf':
+        else :
 
             # TODO: fix for general k
             xc_energy, v_xc = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
@@ -771,21 +960,18 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
         for myg in range( len(basis.g) ):
             rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
+        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
         # exchange-correlation potential
-        if xc == 'lda' :
+        if xc != 'hf' :
 
-            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_a, rho_b)
+            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_a, rho_b, libxc_x_functional, libxc_c_functional)
 
-        elif xc == 'hf' :
+        else :
 
             dum, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
             if nbeta > 0:
                 dum, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
-
-        else:
-            raise Exception("unsupported xc functional")
 
         # total energy
         new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
@@ -801,7 +987,7 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
 
         print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge ) )
 
-        if ( conv < 1e-4 and energy_diff < 1e-5 ) :
+        if ( conv < d_convergence and energy_diff < e_convergence ) :
             break
 
     if scf_iter == maxiter - 1:
@@ -825,4 +1011,179 @@ def uks(cell, basis, xc = 'lda', guess_mix = True, diis_dimension = 8, damp_fock
 
     #assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
 
+    return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, Calpha, Cbeta
+
+def uks_energy(cell, basis, Calpha, Cbeta, xc = 'lda'):
+
+    """
+
+    evaluate the uks energy for a given set of MO coefficients
+
+    :param cell: the unit cell
+    :param basis: plane wave basis information
+    :param Calpha: alpha MO coefficients
+    :param Cbeta: beta MO coefficients
+    :param xc: the exchange-correlation functional
+
+    :return total energy
+    """
+
+    if xc != 'lda' and xc != 'pbe' and xc != 'hf' :
+        raise Exception("uks only supports xc = 'lda' and 'hf' for now")
+
+    libxc_x_functional = None
+    libxc_c_functional = None
+
+    if functional_name_dict[xc][0] is not None :
+        libxc_x_functional = pylibxc.LibXCFunctional(functional_name_dict[xc][0], "polarized")
+
+    if functional_name_dict[xc][1] is not None :
+        libxc_c_functional = pylibxc.LibXCFunctional(functional_name_dict[xc][1], "polarized")
+
+    # get nuclear repulsion energy
+    enuc = cell.energy_nuc()
+
+    # coulomb and xc potentials in reciprocal space
+    v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
+
+    exchange_matrix_alpha = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+    exchange_matrix_beta = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
+
+    # density in reciprocal space
+    rhog = np.zeros(len(basis.g), dtype = 'complex128')
+
+    # charges
+    valence_charges = cell.atom_charges()
+
+    if basis.use_pseudopotential:
+        for i in range (0,len(valence_charges)):
+            valence_charges[i] = int(basis.gth_params[i].Zion)
+
+    # electron-nucleus potential
+    v_ne = None
+    if not basis.use_pseudopotential:
+        v_ne = get_nuclear_electronic_potential(cell, basis, valence_charges = valence_charges)
+    else :
+        v_ne = get_local_pseudopotential_gth(basis)
+
+    # madelung correction
+    madelung = tools.pbc.madelung(cell, basis.kpts)
+
+    # number of alpha and beta bands
+    total_charge = 0
+    for I in range ( len(valence_charges) ):
+        total_charge += valence_charges[I]
+
+    total_charge -= basis.charge
+
+    nbeta = int(total_charge / 2)
+    nalpha = total_charge - nbeta
+
+    # build density
+    rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    rho_a = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_b = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    for kid in range ( len(basis.kpts) ):
+
+        # density
+        my_rho_a, occ_alpha = get_density(basis, Calpha[kid], nalpha, kid)
+        my_rho_b, occ_beta = get_density(basis, Cbeta[kid], nbeta, kid)
+
+        # density should be non-negative ...
+        rho_a += my_rho_a.clip(min = 0)
+        rho_b += my_rho_b.clip(min = 0)
+
+    # total density
+    rho = rho_a + rho_b
+
+    # coulomb potential
+    tmp = np.fft.ifftn(rho)
+    for myg in range( len(basis.g) ):
+        rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+    v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
+
+    occ_alpha = []
+    occ_beta = []
+
+    # exchange-correlation potential
+    if xc != 'hf' :
+
+        v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_a, rho_b, libxc_x_functional, libxc_c_functional)
+
+    else :
+
+        dum, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+        if nbeta > 0:
+            dum, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+
+    # total potential
+
+    if xc != 'hf' :
+        va = v_coulomb + v_ne + v_xc_alpha
+        vb = v_coulomb + v_ne + v_xc_beta
+    else :
+        va = v_coulomb + v_ne
+        vb = v_coulomb + v_ne
+
+    # accumulate energy
+
+    if xc != 'hf':
+
+        xc_energy = get_xc_energy(xc, basis, rho_a, rho_b, libxc_x_functional, libxc_c_functional)
+
+    else :
+
+        # TODO: fix for general k
+        print()
+        print("uks_energy() only supports xc = 'lda' for now")
+        print()
+        exit()
+        xc_energy, v_xc = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+        if nbeta > 0:
+            my_xc_energy, v_xc = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+            xc_energy += my_xc_energy
+
+        xc_energy -= 0.5 * (nalpha + nbeta) * madelung
+
+    one_electron_energy = 0.0
+    coulomb_energy = 0.0
+
+    for kid in range ( len(basis.kpts) ):
+
+        # one-electron part of the energy (alpha)
+        one_electron_energy += get_one_electron_energy(basis,
+                                                       Calpha[kid],
+                                                       nalpha,
+                                                       kid,
+                                                       v_ne = v_ne)
+
+        # one-electron part of the energy (beta)
+        one_electron_energy += get_one_electron_energy(basis,
+                                                       Cbeta[kid],
+                                                       nbeta,
+                                                       kid,
+                                                       v_ne = v_ne)
+
+        # coulomb part of the energy: 1/2 J
+        coulomb_energy += get_coulomb_energy(basis, Calpha[kid], nalpha, kid, v_coulomb)
+
+        # coulomb part of the energy: 1/2 J
+        coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
+
+    print('    ==> energy components <==')
+    print('')
+    print('    nuclear repulsion energy: %20.12lf' % ( enuc ) )
+    print('    one-electron energy:      %20.12lf' % ( np.real(one_electron_energy) ) )
+    print('    coulomb energy:           %20.12lf' % ( np.real(coulomb_energy) ) )
+    print('    xc energy:                %20.12lf' % ( np.real(xc_energy) ) )
+    print('')
+    print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
+    print('')
+
     return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
+
