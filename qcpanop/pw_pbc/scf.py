@@ -206,21 +206,7 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c
                + drho_dy_beta * drho_dy_beta \
                + drho_dz_beta * drho_dz_beta
 
-        count = 0
-        for i in range (0, basis.real_space_grid_dim[0] ):
-            for j in range (0, basis.real_space_grid_dim[1] ):
-                for k in range (0, basis.real_space_grid_dim[2] ):
-
-                    # aa
-                    contracted_gradient[count] = tmp_aa[i, j, k]
-
-                    # ab
-                    contracted_gradient[count+1] = tmp_ab[i, j, k]
-
-                    # bb
-                    contracted_gradient[count+2] = tmp_bb[i, j, k]
-
-                    count = count + 3
+        contracted_gradient = np.array(list(zip(tmp_aa.flatten(), tmp_ab.flatten(), tmp_bb.flatten())))
 
         inp = {
             "rho" : combined_rho,
@@ -389,22 +375,7 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_fu
            + drho_dy_beta * drho_dy_beta \
            + drho_dz_beta * drho_dz_beta
 
-    # TODO vectorize
-    count = 0
-    for i in range (0, basis.real_space_grid_dim[0] ):
-        for j in range (0, basis.real_space_grid_dim[1] ):
-            for k in range (0, basis.real_space_grid_dim[2] ):
-
-                # aa
-                contracted_gradient[count] = tmp_aa[i, j, k]
-
-                # ab
-                contracted_gradient[count+1] = tmp_ab[i, j, k]
-
-                # bb
-                contracted_gradient[count+2] = tmp_bb[i, j, k]
-
-                count = count + 3 
+    contracted_gradient = np.array(list(zip(tmp_aa.flatten(), tmp_ab.flatten(), tmp_bb.flatten())))
 
     inp = {
         "rho" : combined_rho,
@@ -415,14 +386,14 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_fu
 
     val = np.zeros_like(rho_alpha.flatten())
 
+    # compute exchange functional
     if libxc_x_functional is not None :
-        # compute exchange functional
         ret_x = libxc_x_functional.compute( inp, do_vxc = False )
         zk_x = ret_x['zk']
         val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_x.flatten()
 
+    # compute correlation functional
     if libxc_c_functional is not None :
-        # compute correlation functional
         ret_c = libxc_c_functional.compute( inp, do_vxc = False )
         zk_c = ret_c['zk']
         val += (rho_alpha.flatten() + rho_beta.flatten() ) * zk_c.flatten()
@@ -988,7 +959,7 @@ def uks(cell, basis,
         for myg in range( len(basis.g) ):
             rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0) # / omega
+        v_coulomb = 4.0 * np.pi * np.divide(rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
         # exchange-correlation potential
         if xc != 'hf' :
