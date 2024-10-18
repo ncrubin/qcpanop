@@ -9,13 +9,13 @@ from .ufci import run_fci
 
 def test_ufci():
     mol = pyscf.M(
-        atom='He 0 0 0',
-        basis='ccpvdz', charge=-1, spin=1)
+        atom='H 0 0 0; H 0 0 1.0',
+        basis='def2-svp', charge=-1, spin=1)
     nalpha, nbeta = mol.nelec
     mf = mol.UHF()
     mf.kernel()
     cisolver = pyscf.fci.FCI(mf)
-    ref = cisolver.kernel()[0]
+    ref = cisolver.kernel()[0] - mol.energy_nuc()
 
     moa = mf.mo_coeff[0]
     mob = mf.mo_coeff[1]
