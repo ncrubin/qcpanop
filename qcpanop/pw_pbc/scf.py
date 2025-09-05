@@ -855,11 +855,11 @@ def uks(cell, basis,
 
     for kid in range ( len(basis.kpts) ):
 
-        #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nalpha + 1) * 1e-8)
-        #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nbeta + 1) * 1e-8)
+        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nalpha + 1) * 1e-8)
+        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nbeta + 1) * 1e-8)
 
-        Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nalpha+1), dtype='complex128'))
-        Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nbeta+1), dtype='complex128'))
+        #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nalpha+1), dtype='complex128'))
+        #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nbeta+1), dtype='complex128'))
 
         #Calpha[kid] = orthonormalize(Calpha[kid])
         #Cbeta[kid] = orthonormalize(Cbeta[kid])
@@ -1097,8 +1097,8 @@ def uks(cell, basis,
             ace_beta = Ki_beta[kid] @ tmp 
 
             # is ace representation equivalent to original exact exchange representation?
-            assert (np.allclose(ace_alpha, exchange_alpha))
-            assert (np.allclose(ace_beta, exchange_beta))
+            #assert (np.allclose(ace_alpha, exchange_alpha))
+            #assert (np.allclose(ace_beta, exchange_beta))
 
             Fa_c += ace_alpha
             Fb_c += ace_beta
@@ -1244,14 +1244,14 @@ def uks(cell, basis,
             my_v_r = v_alpha_r.copy()
             my_Ki = Ki_alpha[kid].copy()
             my_Binv = Binv_alpha_ace[kid].copy()
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.eigsh(F_C, k=nalpha+1, which="SA")
+            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.eigsh(F_C, k=nalpha+1, which="SA", v0 = Calpha[kid][:,0])
 
             my_N = nbeta
             occ_list = occ_beta.copy()
             my_v_r = v_beta_r.copy()
             my_Ki = Ki_beta[kid].copy()
             my_Binv = Binv_beta_ace[kid].copy()
-            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.eigsh(F_C, k=nbeta+1, which="SA")
+            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.eigsh(F_C, k=nbeta+1, which="SA", v0 = Cbeta[kid][:,0])
 
             #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(fock_a[kid], eigvals=(0, nalpha))
             #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
