@@ -722,7 +722,8 @@ def uks(cell, basis,
         d_convergence = 1e-6, 
         diis_dimension = 8, 
         damp_fock = True, 
-        damping_iterations = 8,
+        damping_iterations = 4,
+        ace_exchange = True,
         maxiter=500):
 
     """
@@ -810,8 +811,8 @@ def uks(cell, basis,
         damping_factor = 0.2
 
     # diis 
-    diis_dimension = 6
-    diis_start_cycle = 4
+    diis_dimension = 8
+    diis_start_cycle = damping_iterations
 
     print("")
     print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
@@ -839,14 +840,8 @@ def uks(cell, basis,
 
     old_total_energy = 0.0
 
-    fock_a = []
-    fock_b = []
-
     Calpha = []
     Cbeta = []
-
-    old_fock_a = []
-    old_fock_b = []
 
     epsilon_alpha = []
     epsilon_beta = []
@@ -859,15 +854,6 @@ def uks(cell, basis,
     Ki_beta = []
 
     for kid in range ( len(basis.kpts) ):
-
-        fock_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
-        fock_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
-
-        old_fock_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
-        old_fock_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
-
-        #Calpha.append(np.eye(basis.n_plane_waves_per_k[kid]))
-        #Cbeta.append(np.eye(basis.n_plane_waves_per_k[kid]))
 
         #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nalpha + 1) * 1e-8)
         #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nbeta + 1) * 1e-8)
@@ -932,12 +918,6 @@ def uks(cell, basis,
         kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
         T.append(np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0)
 
-    #fock_a = []
-    #fock_b = []
-    #for kid in range ( len(basis.kpts) ):
-    #    fock_a.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
-    #    fock_b.append(np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128'))
-
     v_alpha = 0 * v_ne
     v_beta = 0 * v_ne
     v_alpha_old = 0 * v_ne
@@ -990,6 +970,7 @@ def uks(cell, basis,
             #Vnl *= 0.0
 
             Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128')
+            exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128')
             for i in range (nalpha):
 
                 # exchange
@@ -1015,7 +996,7 @@ def uks(cell, basis,
                     Ki_r *= -4.0 * np.pi / basis.omega
 
                 # action of potential on orbitals in real space, then transform to reciprocal space
-                tmp = v_alpha_r * occ_alpha[i] + Ki_r # real space, 3d
+                tmp = v_alpha_r * occ_alpha[i] #+ Ki_r # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
 
@@ -1027,7 +1008,14 @@ def uks(cell, basis,
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
                 Ki_alpha[kid][:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
 
+                # non-ace exchange
+                tmp = Ki_r # real space, 3d
+                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                exchange_alpha[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
+
             Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nbeta), dtype='complex128')
+            exchange_beta = np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128')
             for i in range (nbeta):
 
                 # exchange
@@ -1053,10 +1041,9 @@ def uks(cell, basis,
                     Ki_r *= -4.0 * np.pi / basis.omega 
 
                 # action of potential on orbitals in real space, then transform to reciprocal space
-                tmp = v_beta_r * occ_beta[i] + Ki_r  # real space, 3d
+                tmp = v_beta_r * occ_beta[i] #+ Ki_r  # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
-
                 Fb_c[:,i] = T[kid] * Cbeta[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
                 # for ace
@@ -1064,6 +1051,12 @@ def uks(cell, basis,
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
                 Ki_beta[kid][:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+
+                # non-ace exchange
+                tmp = Ki_r # real space, 3d
+                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                exchange_beta[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
             # for ace < phi_i | Kj>^{-1}
             if scf_iter > 0 :
@@ -1073,6 +1066,7 @@ def uks(cell, basis,
                 Linv = np.linalg.inv(L)
                 Binv_alpha_ace[kid] = -Linv.conj().T @ Linv
 
+                # how's our inverse looking?
                 assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
 
                 tmp = -Cbeta[kid][:, :nbeta].conj().T @ Ki_beta[kid]
@@ -1080,6 +1074,7 @@ def uks(cell, basis,
                 Linv = np.linalg.inv(L)
                 Binv_beta_ace[kid] = -Linv.conj().T @ Linv
 
+                # how's our inverse looking?
                 assert (np.allclose(-tmp @ Binv_beta_ace[kid], np.eye(tmp.shape[0])))
 
             else:
@@ -1101,8 +1096,12 @@ def uks(cell, basis,
             # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
             ace_beta = Ki_beta[kid] @ tmp 
 
-            #Fa_c += ace_alpha
-            #Fb_c += ace_beta
+            # is ace representation equivalent to original exact exchange representation?
+            assert (np.allclose(ace_alpha, exchange_alpha))
+            assert (np.allclose(ace_beta, exchange_beta))
+
+            Fa_c += ace_alpha
+            Fb_c += ace_beta
             
             Fa_c += Vnl @ Calpha[kid][:, :nalpha]
             Fb_c += Vnl @ Cbeta[kid][:, :nbeta]
@@ -1115,20 +1114,7 @@ def uks(cell, basis,
             grad_a = Fa_c - Calpha[kid][:,:nalpha] @ c_Fa_c
             grad_b = Fb_c - Cbeta[kid][:,:nbeta] @ c_Fb_c
 
-            #print('new way', np.linalg.norm(grad_a), np.linalg.norm(grad_b))
-
-            # orbital gradient from [D, F] with the full fock and density matrices
-            #fock_a[kid] = form_fock_matrix(basis, kid, v = v_alpha + v_ne) + Vnl + exchange_matrix_alpha
-            #fock_b[kid] = form_fock_matrix(basis, kid, v = v_beta + v_ne) + Vnl + exchange_matrix_beta
-            #Fa_c = fock_a[kid] @ Calpha[kid][:, :nalpha]
-            #Fb_c = fock_b[kid] @ Cbeta[kid][:, :nbeta]
-            #grad_a = form_orbital_gradient(basis, Calpha[kid], nalpha, fock_a[kid], kid)
-            #grad_b = form_orbital_gradient(basis, Cbeta[kid], nbeta, fock_b[kid], kid)
-            #print('old way', np.linalg.norm(grad_a), np.linalg.norm(grad_b))
-
             error_vector = np.hstack( (error_vector, grad_a.flatten(), grad_b.flatten() ) )
-
-        # extrapolate coulomb potential
 
         # norm of orbital gradient
         conv = np.linalg.norm(error_vector)
@@ -1148,57 +1134,6 @@ def uks(cell, basis,
             new_solution_vector = inner_diis.update(solution_vector, error_vector)
             v_alpha = new_solution_vector[:len(v_alpha)]
             v_beta = new_solution_vector[len(v_alpha):]
-
-        #rho_alpha_old = rho_alpha.copy()
-        #rho_beta_old = rho_beta.copy()
-
-        ## damp or extrapolate density
-        #if scf_iter < diis_start_cycle:
-
-        #    # damping?
-        #    rho_alpha = (1.0-damp) * rho_alpha + damp * rho_alpha_old
-        #    rho_beta = (1.0-damp) * rho_beta + damp * rho_beta_old
-
-        #else :
-
-        #    #v_coulomb = inner_diis.update(v_coulomb, error_vector)
-
-        #    solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
-        #    new_solution_vector = inner_diis.update(solution_vector, error_vector)
-        #    rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape).real
-        #    rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape).real
-
-        #rho_alpha = rho_alpha.clip(min = 0)
-        #rho_beta = rho_beta.clip(min = 0)
-
-        ## need to rebuild potential
-        #rho = rho_alpha + rho_beta
-
-        ## coulomb potential
-        #tmp = np.fft.ifftn(rho)
-        #for myg in range( len(basis.g) ):
-        #    inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-        #v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
-
-        ## exchange-correlation potential
-        #if xc != 'hf' :
-
-        #    v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-        #    xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-
-        #else :
-
-        #    # we'll deal with hf exchange matrices on the fly ... here, just get the energy
-        #    xc_energy, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha, exchange_matrix_alpha, False)
-        #    if nbeta > 0:
-        #        my_xc_energy, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta, exchange_matrix_beta, False)
-        #        xc_energy += my_xc_energy
-        #    xc_energy -= 0.5 * (nalpha + nbeta) * madelung
-
-
-        #fock_a[kid] = form_fock_matrix(basis, kid, v = v_alpha + v_ne) + Vnl + exchange_matrix_alpha
-        #fock_b[kid] = form_fock_matrix(basis, kid, v = v_beta + v_ne) + Vnl + exchange_matrix_beta
 
         # potential in real space
         v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
@@ -1246,7 +1181,7 @@ def uks(cell, basis,
 
                 # exchange
                 Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-                if xc == 'hf' :
+                if xc == 'hf' and not ace_exchange:
                     for j in range(0, my_N):
 
                         # Cij(r') = phi_i(r') phi_j*(r')
@@ -1282,7 +1217,8 @@ def uks(cell, basis,
                 # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
                 ace = my_Ki @ tmp 
 
-                #F_c += ace
+                if ace_exchange :
+                    F_c += ace
 
                 # exact exchange
                 tmp = Ki_r # real space, 3d
@@ -1290,7 +1226,8 @@ def uks(cell, basis,
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
                 tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
 
-                F_c += tmp
+                if not ace_exchange :
+                    F_c += tmp
                 
                 #print(np.linalg.norm(ace - tmp))
 
@@ -1299,11 +1236,8 @@ def uks(cell, basis,
 
                 return F_c
                 #return fock_a[kid] @ c
-
+            
             F_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=apply_fock_operator_to_orbital, dtype='complex128')
-
-            #epsilon_alpha, Calpha[kid] = lobpcg(F_Calpha, Calpha[kid], largest=False, tol=0.1*d_convergence, maxiter=200)
-            #epsilon_beta, Cbeta[kid] = lobpcg(F_Cbeta, Cbeta[kid], largest=False, tol=0.1*d_convergence, maxiter=200)
 
             my_N = nalpha
             occ_list = occ_alpha.copy()
@@ -1325,9 +1259,6 @@ def uks(cell, basis,
             # why do i need to orthonormalize my orbitals???
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = orthonormalize(Cbeta[kid])
-
-            #epsilon_alpha, Calpha = np.linalg.eigh(fock_a)
-            #epsilon_beta, Cbeta = np.linalg.eigh(fock_b)
 
             # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
             #if guess_mix is True and scf_iter == 0:
@@ -1410,41 +1341,6 @@ def uks(cell, basis,
         if conv < d_convergence and energy_diff < e_convergence :
             break
 
-        #inner_diis = lib.diis.DIIS()
-        #inner_diis.space = diis_dimension
-
-        #if xc != 'hf':
-
-        #    if conv < d_convergence and energy_diff < e_convergence :
-        #        break
-
-        #else :
-
-        #    if (conv < d_convergence and energy_diff < e_convergence and recompute_exchange) :
-        #        break
-
-        #    elif (conv < d_convergence and energy_diff < e_convergence and not recompute_exchange or scf_iter == 0):
-
-        #        # update exchange matrix for next set of inner iterations
-
-        #        # TODO: fix for general k
-        #        print('')
-        #        print('        ==> recomputing exchange matrix <==')
-        #        print('')
-        #        recompute_exchange = True
-        #        xc_energy, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha, exchange_matrix_alpha, recompute_exchange)
-        #        if nbeta > 0:
-        #            my_xc_energy, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta, exchange_matrix_beta, recompute_exchange)
-        #            xc_energy += my_xc_energy
-        #        xc_energy -= 0.5 * (nalpha + nbeta) * madelung
-
-        #        # reset diis ... not sure why this is necessary, but convergence is slow otherwise
-        #        #inner_diis = lib.diis.DIIS()
-        #        #inner_diis.space = diis_dimension
-
-        #    else :
-        #        recompute_exchange = False
-
     if scf_iter == maxiter - 1:
         print('')
         print('    UKS iterations did not converge.')
@@ -1464,8 +1360,6 @@ def uks(cell, basis,
     print('')
     print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
     print('')
-
-    #assert(np.isclose( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, -9.802901383306) )
 
     return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, Calpha, Cbeta
 
