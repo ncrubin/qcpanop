@@ -48,7 +48,64 @@ def orthonormalize(C):
     # apply to orbitals
     return C @ S_inv_sqrt
 
-def get_exact_exchange_energy(basis, occupied_orbitals, N, C, exchange_matrix, compute_exchange_matrix = False):
+def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
+    """
+
+    evaluate the exact Hartree-Fock exchange energy, according to
+
+        Ex = - 2 pi / Omega sum_{mn in occ} sum_{g} |Cmn(g)|^2 / |g|^2
+
+    where
+
+        Cmn(g) = FT[ phi_m(r) phi_n*(r) ]
+
+    see JCP 108, 4697 (1998) for more details.
+
+    :param basis: plane wave basis information
+    :param occupied_orbitals: a list of occupied orbitals
+    :param N: the number of electrons
+    :param N: the MO transformation matrix
+
+    :return exchange_energy: the exact Hartree-Fock exchange energy
+
+    """
+
+    # precompute indices
+
+    # FFT grid shape
+    grid_shape = basis.real_space_grid_dim  # e.g., (nx, ny, nz)
+    
+    # Precompute: for each compact G index `myg`, find its flat index in FFT grid ordering
+    flat_idx = np.empty(len(basis.g), dtype=np.int64)
+    for myg in range(len(basis.g)):
+        ix, iy, iz = get_miller_indices(myg, basis)
+        flat_idx[myg] = np.ravel_multi_index((ix, iy, iz), grid_shape)
+
+    # precompute FFT[1/|r-r'|/g2]
+    inv_g2 = np.zeros_like(basis.g2)
+    mask = basis.g2 != 0.0
+    inv_g2[mask] = 1.0 / basis.g2[mask]
+
+    # accumulate exchange energy and matrix
+    exchange_energy = 0.0
+
+    for i in range(0, N):
+        for j in range(0, N):
+
+            # Cij(r') = phi_i(r') phi_j*(r')
+            # Cij(g) = FFT[Cij(r')]
+            tmp = np.fft.ifftn(occupied_orbitals[j].conj() * occupied_orbitals[i])
+            Cij = tmp.ravel()[flat_idx]
+
+            # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+            Kij = Cij * inv_g2
+
+            exchange_energy += np.sum( Cij.conj() * Kij )
+
+    return -2.0 * np.pi / basis.omega * exchange_energy
+
+
+def get_exact_exchange_potential(basis, occupied_orbitals, N, C):
     """
 
     evaluate the exact Hartree-Fock exchange energy, according to
@@ -103,10 +160,8 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C, exchange_matrix, c
 
             exchange_energy += np.sum( Cij.conj() * Kij )
 
-    if not compute_exchange_matrix :
-        return -2.0 * np.pi / basis.omega * exchange_energy, exchange_matrix
-
     # build exchange matrix in planewave basis
+    exchange_matrix = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
 
     Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
 
@@ -148,40 +203,6 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C, exchange_matrix, c
             kk = basis.kg_to_g[0][k]
             
             exchange_matrix[k, i] = row_g[ get_miller_indices(kk, basis) ] 
-
-    # build exchange matrix in occupied orbital basis, then transform to planewave basis
-
-    #Ki_G = np.zeros(basis.n_plane_waves_per_k[0], dtype = 'complex128')
-    #for i in range(0, N):
-
-    #    # Ki(r) = sum_j Kij(r) phi_j(r)
-    #    Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-
-    #    for j in range(0, N):
-
-    #        # Cij(r') = phi_i(r') phi_j*(r')
-    #        # Cij(g) = FFT[Cij(r')]
-    #        tmp = np.fft.ifftn(occupied_orbitals[j].conj() * occupied_orbitals[i])
-    #        Cij = tmp.ravel()[flat_idx]
-
-    #        # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-    #        Kij_G.ravel()[flat_idx] = Cij * inv_g2 #Kij
-
-    #        # Kij(r) = FFT^-1[Kij(g)]
-    #        Kij_r = np.fft.fftn(Kij_G)
-
-    #        # action of K on an occupied orbital, i: 
-    #        # Ki(r) = sum_j Kij(r) phi_j(r)
-    #        Ki_r += Kij_r * occupied_orbitals[j]
-
-    #    # Ki(G) 
-    #    Ki_G_big = np.fft.ifftn(Ki_r).ravel()[flat_idx]
-    #    for i_orb in range( basis.n_plane_waves_per_k[0] ):
-    #        i_dens = basis.kg_to_g[0][i_orb]
-    #        Ki_G[i_orb] = Ki_G_big[i_dens]
-
-    #    # accumulate exchange matrix
-    #    exchange_matrix += np.outer(Ki_G, C[0][:, i].conj())
 
     return -2.0 * np.pi / basis.omega * exchange_energy, -4.0 * np.pi / basis.omega * exchange_matrix
 
@@ -352,7 +373,7 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c
     else :
 
         # TODO: fix for general k
-        xc_energy, v_xc = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
+        xc_energy = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
 
     return v_xc_alpha, v_xc_beta
 
@@ -589,42 +610,6 @@ def form_fock_matrix(basis, kid, v = None):
         fock += get_matrix_elements(basis, kid, v)
     
     # get non-local part of the pseudopotential (not jellium)
-    #if basis.use_pseudopotential:
-    #    fock += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-
-    # get kinetic energy
-    kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
-    T = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 
-    diagonals = T + fock.diagonal()
-    np.fill_diagonal(fock, diagonals)
-
-    # only upper triangle of fock is populated ... symmetrize and rescale diagonal
-    fock = fock + fock.conj().T
-    diag = np.diag(fock)
-    np.fill_diagonal(fock, 0.5 * diag)
-
-    return fock
-
-def form_part_of_fock_matrix(basis, kid, v = None): 
-    """
-
-    form fock matrix
-
-    :param basis: plane wave basis information
-    :param kid: index for a given k-point
-    :param v: the potential ( coulomb + xc + electron-nucleus / local pp )
-
-    :return fock: the fock matrix
-
-    """
-
-    fock = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
-
-    # unpack potential
-    if v is not None:
-        fock += get_matrix_elements(basis, kid, v)
-    
-    # get non-local part of the pseudopotential
     if basis.use_pseudopotential:
         fock += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
@@ -640,7 +625,6 @@ def form_part_of_fock_matrix(basis, kid, v = None):
     np.fill_diagonal(fock, 0.5 * diag)
 
     return fock
-
 
 def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     """
@@ -774,9 +758,6 @@ def uks(cell, basis,
     v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
     v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
     v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
-
-    exchange_matrix_alpha = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
-    exchange_matrix_beta = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
 
     # density in reciprocal space
     rhog = np.zeros(len(basis.g), dtype = 'complex128')
@@ -1226,12 +1207,6 @@ def uks(cell, basis,
                 #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
                 F_c = T[kid][:, None] * c + tmp + Vnl @ c # lobpcg
 
-                #print('v_r * occ', tmp.shape)
-                #print('Vnl * c  ', (Vnl @ c).shape)
-                #print('T * c    ', (T[kid][:, None] * c).shape)
-                #print('c        ', c.shape)
-                #print('F c      ', F_c.shape)
-
                 # ace
 
                 # (< phi_j | K) | c >
@@ -1265,14 +1240,14 @@ def uks(cell, basis,
             my_v_r = v_alpha_r.copy()
             my_Ki = Ki_alpha[kid].copy()
             my_Binv = Binv_alpha_ace[kid].copy()
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
+            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
             my_N = nbeta
             occ_list = occ_beta.copy()
             my_v_r = v_beta_r.copy()
             my_Ki = Ki_beta[kid].copy()
             my_Binv = Binv_beta_ace[kid].copy()
-            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
+            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
             #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(fock_a[kid], eigvals=(0, nalpha))
             #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
@@ -1338,10 +1313,10 @@ def uks(cell, basis,
 
         else :
 
-            # we'll deal with hf exchange matrices on the fly ... here, just get the energy
-            xc_energy, exchange_matrix_alpha = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha, exchange_matrix_alpha, False)
+            # exact exchange energy
+            xc_energy = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
             if nbeta > 0:
-                my_xc_energy, exchange_matrix_beta = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta, exchange_matrix_beta, False)
+                my_xc_energy = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
                 xc_energy += my_xc_energy
             xc_energy -= 0.5 * (nalpha + nbeta) * madelung
 
