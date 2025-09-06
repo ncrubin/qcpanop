@@ -19,7 +19,7 @@ import time
 import warnings
 import numpy as np
 import scipy
-from scipy.sparse.linalg import LinearOperator, lobpcg
+from scipy.sparse.linalg import LinearOperator
 
 from qcpanop.pw_pbc.pseudopotential import get_local_pseudopotential_gth
 from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
@@ -534,24 +534,25 @@ def form_orbital_gradient(basis, C, N, F, kid):
 
     return orbital_gradient
 
-def get_density(basis, C, N, kid):
+def get_density(basis, C, Ne, Nmo, kid):
     """
 
     get real-space density from molecular orbital coefficients
 
     :param basis: plane wave basis information
     :param C: molecular orbital coefficients
-    :param N: the number of electrons
+    :param Ne: the number of electrons
+    :param Nmo: the number of molecular orbitals (Nmo >= Ne)
     :param kid: index for a given k-point
 
     :return rho: the density
-    :return occupied_orbitals: the occupied orbitals in real space 
+    :return orbitals_r: the molecular orbitals in real space 
 
     """
 
-    occupied_orbitals = []
+    orbitals_r = []
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    for pp in range(N):
+    for pp in range(Nmo):
 
         occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
 
@@ -561,11 +562,12 @@ def get_density(basis, C, N, kid):
             occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
 
         occ = np.fft.fftn(occ) 
-        occupied_orbitals.append( occ )
+        orbitals_r.append(occ)
 
-        rho += np.absolute(occ)**2.0 / basis.omega
+        if pp < Ne:
+            rho += np.absolute(occ)**2.0 / basis.omega
 
-    return ( 1.0 / len(basis.kpts) ) * rho, occupied_orbitals
+    return ( 1.0 / len(basis.kpts) ) * rho, orbitals_r
 
 def form_fock_matrix(basis, kid, v = None): 
     """
@@ -808,7 +810,7 @@ def uks(cell, basis,
     # damp fock matrix (helps with convergence sometimes)
     damping_factor = 1.0
     if damp_fock :
-        damping_factor = 0.2
+        damping_factor = 0.5
 
     # diis 
     diis_dimension = 8
@@ -853,25 +855,35 @@ def uks(cell, basis,
     Ki_alpha = []
     Ki_beta = []
 
+    # nmo ... number of desired molecular orbitals ... must be at least ne
+    # TODO: ace doesn't always work correctly for nmo > ne
+    nmo = nalpha
+    if nbeta > nalpha: 
+        nmo = nbeta
+
     for kid in range ( len(basis.kpts) ):
 
-        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nalpha + 1) * 1e-8)
-        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nbeta + 1) * 1e-8)
+        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
+        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
+        #for i in range (nmo):
+        #    Calpha[kid][i, i] = 1.0
+        #for i in range (nmo):
+        #    Cbeta[kid][i, i] = 1.0
+        #Calpha[kid] = orthonormalize(Calpha[kid])
+        #Cbeta[kid] = orthonormalize(Cbeta[kid])
 
         #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nalpha+1), dtype='complex128'))
         #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nbeta+1), dtype='complex128'))
 
-        #Calpha[kid] = orthonormalize(Calpha[kid])
-        #Cbeta[kid] = orthonormalize(Cbeta[kid])
 
-        Binv_alpha_ace.append(np.zeros((nalpha, nalpha), dtype='complex128'))
-        Binv_beta_ace.append(np.zeros((nbeta, nbeta), dtype='complex128'))
+        Binv_alpha_ace.append(np.zeros((nmo, nmo), dtype='complex128'))
+        Binv_beta_ace.append(np.zeros((nmo, nmo), dtype='complex128'))
 
-        Ki_alpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128'))
-        Ki_beta.append(np.zeros((basis.n_plane_waves_per_k[kid], nbeta), dtype='complex128'))
+        Ki_alpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        Ki_beta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
 
-        epsilon_alpha.append(np.zeros((nalpha+1), dtype='complex128'))
-        epsilon_beta.append(np.zeros((nbeta+1), dtype='complex128'))
+        epsilon_alpha.append(np.zeros((nmo), dtype='complex128'))
+        epsilon_beta.append(np.zeros((nmo), dtype='complex128'))
 
     # diis extrapolates fock matrix
     from pyscf import lib
@@ -909,8 +921,8 @@ def uks(cell, basis,
     inv_g2[mask] = 1.0 / basis.g2[mask]
 
     # so we have occ_alpha and occ_beta arrays ... won't work for kpts > 0
-    my_rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, kid)
-    my_rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, kid)
+    my_rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo, kid)
+    my_rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo, kid)
 
     # kinetic energy
     T = []
@@ -969,9 +981,9 @@ def uks(cell, basis,
             # jellium
             #Vnl *= 0.0
 
-            Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128')
-            exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128')
-            for i in range (nalpha):
+            Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+            exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+            for i in range (nmo):
 
                 # exchange
                 Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
@@ -1014,9 +1026,9 @@ def uks(cell, basis,
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
                 exchange_alpha[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
-            Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nbeta), dtype='complex128')
-            exchange_beta = np.zeros((basis.n_plane_waves_per_k[kid], nalpha), dtype='complex128')
-            for i in range (nbeta):
+            Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+            exchange_beta = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+            for i in range (nmo):
 
                 # exchange
                 Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
@@ -1059,60 +1071,62 @@ def uks(cell, basis,
                 exchange_beta[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
             # for ace < phi_i | Kj>^{-1}
-            if scf_iter > 0 :
+            tmp = -Calpha[kid][:, :nmo].conj().T @ Ki_alpha[kid]
+            L = np.linalg.cholesky(tmp)
+            # how's our cholesky decomposition looking?
+            assert (np.allclose(tmp, L @ L.conj().T))
 
-                tmp = -Calpha[kid][:, :nalpha].conj().T @ Ki_alpha[kid]
-                L = np.linalg.cholesky(tmp)
-                Linv = np.linalg.inv(L)
-                Binv_alpha_ace[kid] = -Linv.conj().T @ Linv
+            Linv = np.linalg.inv(L)
+            Binv_alpha_ace[kid] = -Linv.conj().T @ Linv
 
-                # how's our inverse looking?
-                assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
+            # how's our inverse looking?
+            assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
 
-                tmp = -Cbeta[kid][:, :nbeta].conj().T @ Ki_beta[kid]
-                L = np.linalg.cholesky(tmp)
-                Linv = np.linalg.inv(L)
-                Binv_beta_ace[kid] = -Linv.conj().T @ Linv
+            tmp = -Cbeta[kid][:, :nmo].conj().T @ Ki_beta[kid]
+            tmp = 0.5 * (tmp + tmp.conj().T)
+            L = np.linalg.cholesky(tmp)
+            # how's our cholesky decomposition looking?
+            assert (np.allclose(tmp, L @ L.conj().T))
 
-                # how's our inverse looking?
-                assert (np.allclose(-tmp @ Binv_beta_ace[kid], np.eye(tmp.shape[0])))
+            Linv = np.linalg.inv(L)
+            Binv_beta_ace[kid] = -Linv.conj().T @ Linv
 
-            else:
-                pass
+            # how's our inverse looking?
+            assert (np.allclose(-tmp @ Binv_beta_ace[kid], np.eye(tmp.shape[0])))
 
             # for ace
 
             # (< phi_j | K) | c >
-            tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nalpha]
+            tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nmo]
             # sum_j Binv_{ij} < phi_j | K | c > 
             tmp = Binv_alpha_ace[kid] @ tmp 
             # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
             ace_alpha = Ki_alpha[kid] @ tmp 
 
             # < phi_j | K | c >
-            tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nbeta]
+            tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nmo]
             # sum_j Binv_{ij} < phi_j | K | c > 
             tmp = Binv_beta_ace[kid] @ tmp 
             # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
             ace_beta = Ki_beta[kid] @ tmp 
 
             # is ace representation equivalent to original exact exchange representation?
-            #assert (np.allclose(ace_alpha, exchange_alpha))
-            #assert (np.allclose(ace_beta, exchange_beta))
+            assert (np.allclose(ace_alpha, exchange_alpha))
+            assert (np.allclose(ace_beta, exchange_beta))
 
             Fa_c += ace_alpha
             Fb_c += ace_beta
             
-            Fa_c += Vnl @ Calpha[kid][:, :nalpha]
-            Fb_c += Vnl @ Cbeta[kid][:, :nbeta]
+            Fa_c += Vnl @ Calpha[kid][:, :nmo]
+            Fb_c += Vnl @ Cbeta[kid][:, :nmo]
 
             #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nalpha] * Calpha[kid][:,:nalpha]
             #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nbeta] * Cbeta[kid][:,:nbeta]
 
-            c_Fa_c = Calpha[kid][:, :nalpha].conj().T @ Fa_c
-            c_Fb_c = Cbeta[kid][:, :nbeta].conj().T @ Fb_c
-            grad_a = Fa_c - Calpha[kid][:,:nalpha] @ c_Fa_c
-            grad_b = Fb_c - Cbeta[kid][:,:nbeta] @ c_Fb_c
+            c_Fa_c = Calpha[kid][:, :nmo].conj().T @ Fa_c
+            c_Fb_c = Cbeta[kid][:, :nmo].conj().T @ Fb_c
+            grad_a = Fa_c - Calpha[kid][:,:nmo] @ c_Fa_c
+            grad_b = Fb_c - Cbeta[kid][:,:nmo] @ c_Fb_c
 
             error_vector = np.hstack( (error_vector, grad_a.flatten(), grad_b.flatten() ) )
 
@@ -1244,14 +1258,16 @@ def uks(cell, basis,
             my_v_r = v_alpha_r.copy()
             my_Ki = Ki_alpha[kid].copy()
             my_Binv = Binv_alpha_ace[kid].copy()
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.eigsh(F_C, k=nalpha+1, which="SA", v0 = Calpha[kid][:,0])
+            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.eigsh(F_C, k=nmo, which="SA", v0 = Calpha[kid][:,0])
+            #epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False)
 
             my_N = nbeta
             occ_list = occ_beta.copy()
             my_v_r = v_beta_r.copy()
             my_Ki = Ki_beta[kid].copy()
             my_Binv = Binv_beta_ace[kid].copy()
-            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.eigsh(F_C, k=nbeta+1, which="SA", v0 = Cbeta[kid][:,0])
+            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.eigsh(F_C, k=nmo, which="SA", v0 = Cbeta[kid][:,0])
+            #epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False)
 
             #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(fock_a[kid], eigvals=(0, nalpha))
             #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
@@ -1273,8 +1289,8 @@ def uks(cell, basis,
             #    Calpha[kid][:, nalpha] = tmp2
 
             # update density
-            my_rho_alpha, occ_alpha = get_density(basis, Calpha[kid], nalpha, kid)
-            my_rho_beta, occ_beta = get_density(basis, Cbeta[kid], nbeta, kid)
+            my_rho_alpha, occ_alpha = get_density(basis, Calpha[kid], nalpha, nmo, kid)
+            my_rho_beta, occ_beta = get_density(basis, Cbeta[kid], nbeta, nmo, kid)
 
             # density should be non-negative ...
             rho_alpha += my_rho_alpha.clip(min = 0)
