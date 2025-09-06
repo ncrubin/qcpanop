@@ -917,6 +917,8 @@ def uks(cell, basis,
 
     rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_alpha_old = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+    rho_beta_old = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
     for scf_iter in range(maxiter):
 
@@ -1116,22 +1118,51 @@ def uks(cell, basis,
         # norm of orbital gradient
         conv = np.linalg.norm(error_vector)
 
-        # damp or extrapolate potential
+        # damp or extrapolate density or potential
+        rho_alpha_old = rho_alpha.copy()
+        rho_beta_old = rho_beta.copy()
         if scf_iter < diis_start_cycle:
 
             # damping?
-            v_alpha = (1.0-damp) * v_alpha + damp * v_alpha_old
-            v_beta = (1.0-damp) * v_beta + damp * v_beta_old
+            #v_alpha = (1.0-damp) * v_alpha + damp * v_alpha_old
+            #v_beta = (1.0-damp) * v_beta + damp * v_beta_old
+            rho_alpha = (1.0-damp) * rho_alpha + damp * rho_alpha_old
+            rho_beta = (1.0-damp) * rho_beta + damp * rho_beta_old
 
         else :
 
             #v_coulomb = inner_diis.update(v_coulomb, error_vector)
 
-            solution_vector = np.hstack( (v_alpha, v_beta) )
+            solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
+            #solution_vector = np.hstack( (v_alpha, v_beta) )
             new_solution_vector = inner_diis.update(solution_vector, error_vector)
-            v_alpha = new_solution_vector[:len(v_alpha)]
-            v_beta = new_solution_vector[len(v_alpha):]
+            #v_alpha = new_solution_vector[:len(v_alpha)]
+            #v_beta = new_solution_vector[len(v_alpha):]
+            rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
+            rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
 
+            rho_alpha.clip(min = 0)
+            rho_beta.clip(min = 0)
+
+        # rebuild potentials
+        rho = rho_alpha + rho_beta
+
+        # coulomb potential
+        tmp = np.fft.ifftn(rho)
+        for myg in range( len(basis.g) ):
+            inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+        v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+
+        # exchange-correlation potential
+        if xc != 'hf' :
+
+            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
+            xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
+
+        v_alpha = v_coulomb + v_xc_alpha
+        v_beta = v_coulomb + v_xc_beta
+    
         # potential in real space
         v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
         v_alpha_r.ravel()[flat_idx] = v_alpha + v_ne
