@@ -856,24 +856,23 @@ def uks(cell, basis,
     Ki_beta = []
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
-    # TODO: ace doesn't always work correctly for nmo > ne
-    nmo = nalpha
-    if nbeta > nalpha: 
-        nmo = nbeta
+    # warning: ace has trouble for nmo > ne with eigsh, but lobpcg seems to work
+    nmo = nalpha + 1
+    if nbeta > nalpha:  
+        nmo = nbeta  + 1
 
     for kid in range ( len(basis.kpts) ):
 
-        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
-        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
-        #for i in range (nmo):
-        #    Calpha[kid][i, i] = 1.0
-        #for i in range (nmo):
-        #    Cbeta[kid][i, i] = 1.0
-        #Calpha[kid] = orthonormalize(Calpha[kid])
-        #Cbeta[kid] = orthonormalize(Cbeta[kid])
-
-        #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nalpha+1), dtype='complex128'))
-        #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nbeta+1), dtype='complex128'))
+        #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
+        #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
+        Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        for i in range (nmo):
+            Calpha[kid][i, i] = 1.0
+        for i in range (nmo):
+            Cbeta[kid][i, i] = 1.0
+        Calpha[kid] = orthonormalize(Calpha[kid])
+        Cbeta[kid] = orthonormalize(Cbeta[kid])
 
 
         Binv_alpha_ace.append(np.zeros((nmo, nmo), dtype='complex128'))
@@ -1073,6 +1072,7 @@ def uks(cell, basis,
             # for ace < phi_i | Kj>^{-1}
             tmp = -Calpha[kid][:, :nmo].conj().T @ Ki_alpha[kid]
             L = np.linalg.cholesky(tmp)
+
             # how's our cholesky decomposition looking?
             assert (np.allclose(tmp, L @ L.conj().T))
 
@@ -1083,8 +1083,8 @@ def uks(cell, basis,
             assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
 
             tmp = -Cbeta[kid][:, :nmo].conj().T @ Ki_beta[kid]
-            tmp = 0.5 * (tmp + tmp.conj().T)
             L = np.linalg.cholesky(tmp)
+
             # how's our cholesky decomposition looking?
             assert (np.allclose(tmp, L @ L.conj().T))
 
@@ -1188,7 +1188,8 @@ def uks(cell, basis,
                 """
 
                 # orbital in real space
-                occ = np.zeros(np.prod(grid_shape), dtype=np.complex128)
+                #occ = np.zeros(np.prod(grid_shape), dtype=np.complex128) # eigsh
+                occ = np.zeros([np.prod(grid_shape), c.shape[1]], dtype=np.complex128) # lobpcg
                 occ[grid_idx_k[kid]] = c
                 occ = occ.reshape(grid_shape)
                 occ = np.fft.fftn(occ) 
@@ -1219,10 +1220,19 @@ def uks(cell, basis,
                 tmp = my_v_r * occ  # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+                tmp = tmp.reshape(c.shape) # for lobpcg
 
-                F_c = T[kid] * c + tmp[basis.kg_to_g[kid]] + Vnl @ c
+                #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
+                F_c = T[kid][:, None] * c + tmp + Vnl @ c # lobpcg
 
-                # for ace
+                #print('v_r * occ', tmp.shape)
+                #print('Vnl * c  ', (Vnl @ c).shape)
+                #print('T * c    ', (T[kid][:, None] * c).shape)
+                #print('c        ', c.shape)
+                #print('F c      ', F_c.shape)
+
+                # ace
 
                 # (< phi_j | K) | c >
                 tmp = my_Ki.conj().T @ c
@@ -1235,22 +1245,19 @@ def uks(cell, basis,
                     F_c += ace
 
                 # exact exchange
-                tmp = Ki_r # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
-                tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-
                 if not ace_exchange :
+                    tmp = Ki_r # real space, 3d
+                    tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+                    tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                    tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+                    tmp = tmp.reshape(c.shape) # for lobpcg
+
                     F_c += tmp
-                
+
                 #print(np.linalg.norm(ace - tmp))
 
-                #assert np.allclose(F_c, fock_a[kid] @ c)
-                #print(np.linalg.norm(F_c - fock_a[kid] @ c))
-
                 return F_c
-                #return fock_a[kid] @ c
-            
+
             F_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=apply_fock_operator_to_orbital, dtype='complex128')
 
             my_N = nalpha
@@ -1258,16 +1265,14 @@ def uks(cell, basis,
             my_v_r = v_alpha_r.copy()
             my_Ki = Ki_alpha[kid].copy()
             my_Binv = Binv_alpha_ace[kid].copy()
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.eigsh(F_C, k=nmo, which="SA", v0 = Calpha[kid][:,0])
-            #epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False)
+            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
 
             my_N = nbeta
             occ_list = occ_beta.copy()
             my_v_r = v_beta_r.copy()
             my_Ki = Ki_beta[kid].copy()
             my_Binv = Binv_beta_ace[kid].copy()
-            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.eigsh(F_C, k=nmo, which="SA", v0 = Cbeta[kid][:,0])
-            #epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False)
+            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
 
             #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(fock_a[kid], eigvals=(0, nalpha))
             #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
