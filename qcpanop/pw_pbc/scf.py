@@ -1050,53 +1050,55 @@ def uks(cell, basis,
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
                 exchange_beta[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
-            # for ace < phi_i | Kj>^{-1}
-            tmp = -Calpha[kid][:, :nmo].conj().T @ Ki_alpha[kid]
-            L = np.linalg.cholesky(tmp)
+            if xc == 'hf':
 
-            # how's our cholesky decomposition looking?
-            assert (np.allclose(tmp, L @ L.conj().T))
+                # for ace < phi_i | Kj>^{-1}
+                tmp = -Calpha[kid][:, :nmo].conj().T @ Ki_alpha[kid]
+                L = np.linalg.cholesky(tmp)
 
-            Linv = np.linalg.inv(L)
-            Binv_alpha_ace[kid] = -Linv.conj().T @ Linv
+                # how's our cholesky decomposition looking?
+                assert (np.allclose(tmp, L @ L.conj().T))
 
-            # how's our inverse looking?
-            assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
+                Linv = np.linalg.inv(L)
+                Binv_alpha_ace[kid] = -Linv.conj().T @ Linv
 
-            tmp = -Cbeta[kid][:, :nmo].conj().T @ Ki_beta[kid]
-            L = np.linalg.cholesky(tmp)
+                # how's our inverse looking?
+                assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
 
-            # how's our cholesky decomposition looking?
-            assert (np.allclose(tmp, L @ L.conj().T))
+                tmp = -Cbeta[kid][:, :nmo].conj().T @ Ki_beta[kid]
+                L = np.linalg.cholesky(tmp)
 
-            Linv = np.linalg.inv(L)
-            Binv_beta_ace[kid] = -Linv.conj().T @ Linv
+                # how's our cholesky decomposition looking?
+                assert (np.allclose(tmp, L @ L.conj().T))
 
-            # how's our inverse looking?
-            assert (np.allclose(-tmp @ Binv_beta_ace[kid], np.eye(tmp.shape[0])))
+                Linv = np.linalg.inv(L)
+                Binv_beta_ace[kid] = -Linv.conj().T @ Linv
 
-            # for ace
+                # how's our inverse looking?
+                assert (np.allclose(-tmp @ Binv_beta_ace[kid], np.eye(tmp.shape[0])))
 
-            # (< phi_j | K) | c >
-            tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nmo]
-            # sum_j Binv_{ij} < phi_j | K | c > 
-            tmp = Binv_alpha_ace[kid] @ tmp 
-            # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
-            ace_alpha = Ki_alpha[kid] @ tmp 
+                # for ace
 
-            # < phi_j | K | c >
-            tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nmo]
-            # sum_j Binv_{ij} < phi_j | K | c > 
-            tmp = Binv_beta_ace[kid] @ tmp 
-            # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
-            ace_beta = Ki_beta[kid] @ tmp 
+                # (< phi_j | K) | c >
+                tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nmo]
+                # sum_j Binv_{ij} < phi_j | K | c > 
+                tmp = Binv_alpha_ace[kid] @ tmp 
+                # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
+                ace_alpha = Ki_alpha[kid] @ tmp 
 
-            # is ace representation equivalent to original exact exchange representation?
-            assert (np.allclose(ace_alpha, exchange_alpha))
-            assert (np.allclose(ace_beta, exchange_beta))
+                # < phi_j | K | c >
+                tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nmo]
+                # sum_j Binv_{ij} < phi_j | K | c > 
+                tmp = Binv_beta_ace[kid] @ tmp 
+                # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
+                ace_beta = Ki_beta[kid] @ tmp 
 
-            Fa_c += ace_alpha
-            Fb_c += ace_beta
+                # is ace representation equivalent to original exact exchange representation?
+                assert (np.allclose(ace_alpha, exchange_alpha))
+                assert (np.allclose(ace_beta, exchange_beta))
+
+                Fa_c += ace_alpha
+                Fb_c += ace_beta
             
             Fa_c += Vnl @ Calpha[kid][:, :nmo]
             Fb_c += Vnl @ Cbeta[kid][:, :nmo]
