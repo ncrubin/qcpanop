@@ -794,7 +794,7 @@ def uks(cell, basis,
     # damp fock matrix (helps with convergence sometimes)
     damping_factor = 1.0
     if damp_fock :
-        damping_factor = 0.50
+        damping_factor = 0.8
 
     # diis 
     diis_dimension = 8
