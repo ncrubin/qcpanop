@@ -644,6 +644,7 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     # oei = T + V 
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
 
+    # jellium
     if v_ne is not None:
         oei += get_matrix_elements(basis, kid, v_ne)
 
@@ -785,19 +786,23 @@ def uks(cell, basis,
 
     # jellium
     #v_ne *= 0.0
-    #nalpha = 6
-    #nbeta = 6
+    #nalpha = 8 #48
+    #nbeta = 8 #48
+    #enuc = 0.0
+
 
     # damp fock matrix (helps with convergence sometimes)
     damping_factor = 1.0
     if damp_fock :
-        damping_factor = 0.5
+        damping_factor = 0.90
 
     # diis 
     diis_dimension = 8
     diis_start_cycle = damping_iterations
 
+    rs = (3 * basis.omega / ( 4.0 * np.pi * (nalpha + nbeta)))**(1.0/3.0)
     print("")
+    print('    Wigner-Seitz radius (rs)                     %20.12f' % (rs))
     print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
     print('    correlation functional:                      %20s' % ( functional_name_dict[xc][1] ) )
     print('    e_convergence:                               %20.2e' % ( e_convergence ) )
@@ -819,6 +824,7 @@ def uks(cell, basis,
     print("    ==> Begin UKS Iterations <==")
     print("")
 
+    #print("    %5s %20s %20s %20s %10s %20s %20s %20s %20s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec', '||Ca - Cb||', 'kinetic', 'coulomb', 'exchange'))
     print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec'))
 
     old_total_energy = 0.0
@@ -838,22 +844,23 @@ def uks(cell, basis,
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
     # warning: ace has trouble for nmo > ne with eigsh, but lobpcg seems to work
-    nmo = nalpha + 1
+    nmo = nalpha
     if nbeta > nalpha:  
-        nmo = nbeta  + 1
+        nmo = nbeta
 
     for kid in range ( len(basis.kpts) ):
 
-        #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
-        #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-8)
-        Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
-        Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-3)
+        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-3)
+        #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
         for i in range (nmo):
             Calpha[kid][i, i] = 1.0
         for i in range (nmo):
             Cbeta[kid][i, i] = 1.0
         Calpha[kid] = orthonormalize(Calpha[kid])
-        Cbeta[kid] = orthonormalize(Cbeta[kid])
+        #Cbeta[kid] = orthonormalize(Cbeta[kid])
+        Cbeta[kid] = Calpha[kid].copy()
 
 
         Binv_alpha_ace.append(np.zeros((nmo, nmo), dtype='complex128'))
@@ -910,6 +917,13 @@ def uks(cell, basis,
         kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
         T.append(np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0)
 
+        #epsilon_alpha, Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nmo-1))
+        #Calpha[kid] = orthonormalize(Calpha[kid])
+        #Cbeta[kid] = Calpha[kid].copy()
+
+    #print(2*np.sum(np.sort(T[0])[:nalpha]))
+    #exit()
+
     v_alpha = 0 * v_ne
     v_beta = 0 * v_ne
     v_alpha_old = 0 * v_ne
@@ -919,6 +933,32 @@ def uks(cell, basis,
     rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     rho_alpha_old = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     rho_beta_old = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+
+    # jellium guess
+    rho_alpha = nalpha / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
+    rho_beta = nbeta / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
+
+    # rebuild potentials
+    rho = rho_alpha + rho_beta
+
+    # coulomb potential
+    tmp = np.fft.ifftn(rho)
+    for myg in range( len(basis.g) ):
+        inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+    v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+
+    # jellium
+    #v_coulomb *= 0.0
+
+    # exchange-correlation potential
+    if xc != 'hf' :
+
+        v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
+        xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
+
+    v_alpha = v_coulomb + v_xc_alpha
+    v_beta = v_coulomb + v_xc_beta
 
     for scf_iter in range(maxiter):
 
@@ -934,11 +974,11 @@ def uks(cell, basis,
         # potential in real space
         v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
         v_alpha_r.ravel()[flat_idx] = v_alpha + v_ne
-        v_alpha_r = np.fft.fftn(v_alpha_r)
+        v_alpha_r = np.fft.fftn(v_alpha_r).real
 
         v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
         v_beta_r.ravel()[flat_idx] = v_beta + v_ne
-        v_beta_r = np.fft.fftn(v_beta_r)
+        v_beta_r = np.fft.fftn(v_beta_r).real
 
         # zero density for this iteration
         rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
@@ -1129,20 +1169,17 @@ def uks(cell, basis,
             rho_alpha = (1.0-damp) * rho_alpha + damp * rho_alpha_old
             rho_beta = (1.0-damp) * rho_beta + damp * rho_beta_old
 
-        else :
 
-            #v_coulomb = inner_diis.update(v_coulomb, error_vector)
+        solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
+        #solution_vector = np.hstack( (v_alpha, v_beta) )
+        new_solution_vector = inner_diis.update(solution_vector, error_vector)
+        #v_alpha = new_solution_vector[:len(v_alpha)]
+        #v_beta = new_solution_vector[len(v_alpha):]
+        rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
+        rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
 
-            solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
-            #solution_vector = np.hstack( (v_alpha, v_beta) )
-            new_solution_vector = inner_diis.update(solution_vector, error_vector)
-            #v_alpha = new_solution_vector[:len(v_alpha)]
-            #v_beta = new_solution_vector[len(v_alpha):]
-            rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
-            rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
-
-            rho_alpha.clip(min = 0)
-            rho_beta.clip(min = 0)
+        rho_alpha.clip(min = 0)
+        rho_beta.clip(min = 0)
 
         # rebuild potentials
         rho = rho_alpha + rho_beta
@@ -1153,6 +1190,9 @@ def uks(cell, basis,
             inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
         v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+
+        # jellium
+        #v_coulomb *= 0.0
 
         # exchange-correlation potential
         if xc != 'hf' :
@@ -1187,6 +1227,9 @@ def uks(cell, basis,
             Vnl = Vnl + Vnl.conj().T
             diag = np.diag(Vnl)
             np.fill_diagonal(Vnl, 0.5 * diag)
+
+            # jellium
+            #Vnl *= 0.0
 
             def apply_fock_operator_to_orbital(c):
                 """
@@ -1273,21 +1316,22 @@ def uks(cell, basis,
             my_v_r = v_alpha_r.copy()
             my_Ki = Ki_alpha[kid].copy()
             my_Binv = Binv_alpha_ace[kid].copy()
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
+            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
 
             my_N = nbeta
             occ_list = occ_beta.copy()
             my_v_r = v_beta_r.copy()
             my_Ki = Ki_beta[kid].copy()
             my_Binv = Binv_beta_ace[kid].copy()
-            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
+            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
 
-            #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(fock_a[kid], eigvals=(0, nalpha))
+            #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
             #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
 
             # why do i need to orthonormalize my orbitals???
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = orthonormalize(Cbeta[kid])
+            #Cbeta[kid] = Calpha[kid].copy()
 
             # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
             #if guess_mix is True and scf_iter == 0:
@@ -1338,6 +1382,9 @@ def uks(cell, basis,
 
         v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
+        # jellium
+        #v_coulomb *= 0.0
+
         # exchange-correlation potential
         if xc != 'hf' :
 
@@ -1351,6 +1398,7 @@ def uks(cell, basis,
             if nbeta > 0:
                 my_xc_energy = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
                 xc_energy += my_xc_energy
+            # jellium
             xc_energy -= 0.5 * (nalpha + nbeta) * madelung
 
         # total energy
@@ -1365,7 +1413,8 @@ def uks(cell, basis,
         # charge
         charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
 
-        print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge ) )
+        #print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf %20.12f %20.12f %20.12f %20.12f %20.12f" %  ( scf_iter, new_total_energy, energy_diff, conv, charge, np.linalg.norm(Calpha[kid] - Cbeta[kid]), np.real(one_electron_energy), np.real(coulomb_energy), np.real(xc_energy), -0.5 * (nalpha + nbeta) * madelung))
+        print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
 
         if conv < d_convergence and energy_diff < e_convergence :
             break
