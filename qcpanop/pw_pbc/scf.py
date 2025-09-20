@@ -710,7 +710,7 @@ def uks(cell, basis,
         d_convergence = 1e-6, 
         diis_dimension = 8, 
         damp_fock = True, 
-        damping_iterations = 4,
+        damping_iterations = 8,
         ace_exchange = True,
         jellium = False,
         jellium_ne = 2,
@@ -800,7 +800,6 @@ def uks(cell, basis,
         damping_factor = 0.8
 
     # diis 
-    diis_dimension = 8
     diis_start_cycle = damping_iterations
 
     rs = (3 * basis.omega / ( 4.0 * np.pi * (nalpha + nbeta)))**(1.0/3.0)
@@ -849,38 +848,39 @@ def uks(cell, basis,
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
     # warning: ace has trouble for nmo > ne with eigsh, but lobpcg seems to work
-    nmo = nalpha
-    if nbeta > nalpha:  
-        nmo = nbeta
+    nmo_alpha = nalpha + 1
+    nmo_beta = nbeta + 1
+    #if nbeta > nalpha:  
+    #    nmo = nbeta
 
     for kid in range ( len(basis.kpts) ):
 
-        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-3)
-        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo) * 1e-3)
+        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-3)
+        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-3)
         #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
         #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
-        for i in range (nmo):
+        for i in range (nmo_alpha):
             Calpha[kid][i, i] = 1.0
-        for i in range (nmo):
+        for i in range (nmo_beta):
             Cbeta[kid][i, i] = 1.0
         Calpha[kid] = orthonormalize(Calpha[kid])
         #Cbeta[kid] = orthonormalize(Cbeta[kid])
         Cbeta[kid] = Calpha[kid].copy()
 
 
-        Binv_alpha_ace.append(np.zeros((nmo, nmo), dtype='complex128'))
-        Binv_beta_ace.append(np.zeros((nmo, nmo), dtype='complex128'))
+        Binv_alpha_ace.append(np.zeros((nmo_alpha, nmo_alpha), dtype='complex128'))
+        Binv_beta_ace.append(np.zeros((nmo_beta, nmo_beta), dtype='complex128'))
 
-        Ki_alpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
-        Ki_beta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        Ki_alpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128'))
+        Ki_beta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128'))
 
-        epsilon_alpha.append(np.zeros((nmo), dtype='complex128'))
-        epsilon_beta.append(np.zeros((nmo), dtype='complex128'))
+        epsilon_alpha.append(np.zeros((nmo_alpha), dtype='complex128'))
+        epsilon_beta.append(np.zeros((nmo_beta), dtype='complex128'))
 
     # diis extrapolates fock matrix
     from pyscf import lib
-    inner_diis = lib.diis.DIIS()
-    inner_diis.space = diis_dimension
+    diis = lib.diis.DIIS()
+    diis.space = diis_dimension
 
     # begin UKS iterations
     xc_energy = 0.0
@@ -913,8 +913,8 @@ def uks(cell, basis,
     inv_g2[mask] = 1.0 / basis.g2[mask]
 
     # so we have occ_alpha and occ_beta arrays ... won't work for kpts > 0
-    my_rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo, kid)
-    my_rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo, kid)
+    my_rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
+    my_rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
 
     # kinetic energy
     T = []
@@ -1010,9 +1010,9 @@ def uks(cell, basis,
             if jellium:
                 Vnl *= 0.0
 
-            Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
-            exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
-            for i in range (nmo):
+            Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128')
+            exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128')
+            for i in range (nmo_alpha):
 
                 # exchange
                 Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
@@ -1055,9 +1055,9 @@ def uks(cell, basis,
                 tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
                 exchange_alpha[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
-            Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
-            exchange_beta = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
-            for i in range (nmo):
+            Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128')
+            exchange_beta = np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128')
+            for i in range (nmo_beta):
 
                 # exchange
                 Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
@@ -1102,7 +1102,7 @@ def uks(cell, basis,
             if xc == 'hf':
 
                 # for ace < phi_i | Kj>^{-1}
-                tmp = -Calpha[kid][:, :nmo].conj().T @ Ki_alpha[kid]
+                tmp = -Calpha[kid][:, :nmo_alpha].conj().T @ Ki_alpha[kid]
                 L = np.linalg.cholesky(tmp)
 
                 # how's our cholesky decomposition looking?
@@ -1114,7 +1114,7 @@ def uks(cell, basis,
                 # how's our inverse looking?
                 assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
 
-                tmp = -Cbeta[kid][:, :nmo].conj().T @ Ki_beta[kid]
+                tmp = -Cbeta[kid][:, :nmo_beta].conj().T @ Ki_beta[kid]
                 L = np.linalg.cholesky(tmp)
 
                 # how's our cholesky decomposition looking?
@@ -1129,14 +1129,14 @@ def uks(cell, basis,
                 # for ace
 
                 # (< phi_j | K) | c >
-                tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nmo]
+                tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nmo_alpha]
                 # sum_j Binv_{ij} < phi_j | K | c > 
                 tmp = Binv_alpha_ace[kid] @ tmp 
                 # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
                 ace_alpha = Ki_alpha[kid] @ tmp 
 
                 # < phi_j | K | c >
-                tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nmo]
+                tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nmo_beta]
                 # sum_j Binv_{ij} < phi_j | K | c > 
                 tmp = Binv_beta_ace[kid] @ tmp 
                 # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
@@ -1149,16 +1149,16 @@ def uks(cell, basis,
                 Fa_c += ace_alpha
                 Fb_c += ace_beta
             
-            Fa_c += Vnl @ Calpha[kid][:, :nmo]
-            Fb_c += Vnl @ Cbeta[kid][:, :nmo]
+            Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
+            Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
 
             #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nalpha] * Calpha[kid][:,:nalpha]
             #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nbeta] * Cbeta[kid][:,:nbeta]
 
-            c_Fa_c = Calpha[kid][:, :nmo].conj().T @ Fa_c
-            c_Fb_c = Cbeta[kid][:, :nmo].conj().T @ Fb_c
-            grad_a = Fa_c - Calpha[kid][:,:nmo] @ c_Fa_c
-            grad_b = Fb_c - Cbeta[kid][:,:nmo] @ c_Fb_c
+            c_Fa_c = Calpha[kid][:, :nmo_alpha].conj().T @ Fa_c
+            c_Fb_c = Cbeta[kid][:, :nmo_beta].conj().T @ Fb_c
+            grad_a = Fa_c - Calpha[kid][:,:nmo_alpha] @ c_Fa_c
+            grad_b = Fb_c - Cbeta[kid][:,:nmo_beta] @ c_Fb_c
 
             error_vector = np.hstack( (error_vector, grad_a.flatten(), grad_b.flatten() ) )
 
@@ -1179,7 +1179,7 @@ def uks(cell, basis,
 
         solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
         #solution_vector = np.hstack( (v_alpha, v_beta) )
-        new_solution_vector = inner_diis.update(solution_vector, error_vector)
+        new_solution_vector = diis.update(solution_vector, error_vector)
         #v_alpha = new_solution_vector[:len(v_alpha)]
         #v_beta = new_solution_vector[len(v_alpha):]
         rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
@@ -1339,27 +1339,27 @@ def uks(cell, basis,
                 epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
                 #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
 
+            # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
+            if guess_mix is True and scf_iter == 0:
+
+                c = np.cos(0.05 * np.pi)
+                s = np.sin(0.05 * np.pi)
+
+                tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
+                tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
+
+                Calpha[kid][:, nalpha-1] = tmp1
+                Calpha[kid][:, nalpha] = tmp2
+
             # why do i need to orthonormalize my orbitals???
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = orthonormalize(Cbeta[kid])
             if jellium:
                 Cbeta[kid] = Calpha[kid].copy()
 
-            # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
-            #if guess_mix is True and scf_iter == 0:
-
-            #    c = np.cos(0.25 * np.pi)
-            #    s = np.sin(0.25 * np.pi)
-
-            #    tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
-            #    tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
-
-            #    Calpha[kid][:, nalpha-1] = tmp1
-            #    Calpha[kid][:, nalpha] = tmp2
-
             # update density
-            my_rho_alpha, occ_alpha = get_density(basis, Calpha[kid], nalpha, nmo, kid)
-            my_rho_beta, occ_beta = get_density(basis, Cbeta[kid], nbeta, nmo, kid)
+            my_rho_alpha, occ_alpha = get_density(basis, Calpha[kid], nalpha, nmo_alpha, kid)
+            my_rho_beta, occ_beta = get_density(basis, Cbeta[kid], nbeta, nmo_beta, kid)
 
             # density should be non-negative ...
             rho_alpha += my_rho_alpha.clip(min = 0)
