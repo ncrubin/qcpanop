@@ -610,7 +610,7 @@ def form_fock_matrix(basis, kid, v = None):
         fock += get_matrix_elements(basis, kid, v)
     
     # get non-local part of the pseudopotential (not jellium)
-    if basis.use_pseudopotential:
+    if basis.use_pseudopotential and not jellium:
         fock += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
     # get kinetic energy
@@ -626,7 +626,7 @@ def form_fock_matrix(basis, kid, v = None):
 
     return fock
 
-def get_one_electron_energy(basis, C, N, kid, v_ne = None):
+def get_one_electron_energy(basis, C, N, kid, v_ne = None, jellium = False):
     """
 
     get one-electron part of the energy
@@ -645,11 +645,12 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None):
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
 
     # jellium
-    if v_ne is not None:
-        oei += get_matrix_elements(basis, kid, v_ne)
+    if not jellium:
+        if v_ne is not None:
+            oei += get_matrix_elements(basis, kid, v_ne)
 
-    if basis.use_pseudopotential:
-        oei += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
+        if basis.use_pseudopotential:
+            oei += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
     kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
     T = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 
@@ -711,6 +712,8 @@ def uks(cell, basis,
         damp_fock = True, 
         damping_iterations = 4,
         ace_exchange = True,
+        jellium = False,
+        jellium_ne = 2,
         maxiter=500):
 
     """
@@ -785,11 +788,11 @@ def uks(cell, basis,
     total_charge = cell.charge
 
     # jellium
-    #v_ne *= 0.0
-    #nalpha = 8 #48
-    #nbeta = 8 #48
-    #enuc = 0.0
-
+    if jellium:
+        v_ne *= 0.0
+        nalpha = jellium_ne // 2
+        nbeta = jellium_ne // 2
+        enuc = 0.0
 
     # damp fock matrix (helps with convergence sometimes)
     damping_factor = 1.0
@@ -824,8 +827,10 @@ def uks(cell, basis,
     print("    ==> Begin UKS Iterations <==")
     print("")
 
-    #print("    %5s %20s %20s %20s %10s %20s %20s %20s %20s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec', '||Ca - Cb||', 'kinetic', 'coulomb', 'exchange'))
-    print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec'))
+    if jellium:
+        print("    %5s %20s %20s %20s %10s %20s %20s %20s %20s %20s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec', '||Ca - Cb||', 'kinetic', 'coulomb', 'exchange', 'madelung'))
+    else :
+        print("    %5s %20s %20s %20s %10s" % ('iter', 'energy', '|dE|', '||[F, D]||', 'Nelec'))
 
     old_total_energy = 0.0
 
@@ -948,8 +953,9 @@ def uks(cell, basis,
 
     v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-    # jellium
-    #v_coulomb *= 0.0
+    # jellium ... but only true in the thermodynamic limit
+    if jellium:
+        v_coulomb *= 0.0
 
     # exchange-correlation potential
     if xc != 'hf' :
@@ -1001,7 +1007,8 @@ def uks(cell, basis,
             np.fill_diagonal(Vnl, 0.5 * diag)
 
             # jellium
-            #Vnl *= 0.0
+            if jellium:
+                Vnl *= 0.0
 
             Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
             exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
@@ -1191,8 +1198,9 @@ def uks(cell, basis,
 
         v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-        # jellium
-        #v_coulomb *= 0.0
+        # jellium ... but only true in the thermodynamic limit
+        if jellium:
+            v_coulomb *= 0.0
 
         # exchange-correlation potential
         if xc != 'hf' :
@@ -1229,7 +1237,8 @@ def uks(cell, basis,
             np.fill_diagonal(Vnl, 0.5 * diag)
 
             # jellium
-            #Vnl *= 0.0
+            if jellium:
+                Vnl *= 0.0
 
             def apply_fock_operator_to_orbital(c):
                 """
@@ -1311,27 +1320,30 @@ def uks(cell, basis,
 
             F_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=apply_fock_operator_to_orbital, dtype='complex128')
 
-            my_N = nalpha
-            occ_list = occ_alpha.copy()
-            my_v_r = v_alpha_r.copy()
-            my_Ki = Ki_alpha[kid].copy()
-            my_Binv = Binv_alpha_ace[kid].copy()
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
+            if not jellium:
+                my_N = nalpha
+                occ_list = occ_alpha.copy()
+                my_v_r = v_alpha_r.copy()
+                my_Ki = Ki_alpha[kid].copy()
+                my_Binv = Binv_alpha_ace[kid].copy()
+                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
-            my_N = nbeta
-            occ_list = occ_beta.copy()
-            my_v_r = v_beta_r.copy()
-            my_Ki = Ki_beta[kid].copy()
-            my_Binv = Binv_beta_ace[kid].copy()
-            epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.1)
+                my_N = nbeta
+                occ_list = occ_beta.copy()
+                my_v_r = v_beta_r.copy()
+                my_Ki = Ki_beta[kid].copy()
+                my_Binv = Binv_beta_ace[kid].copy()
+                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
-            #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
-            #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
+            else :
+                epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
+                #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
 
             # why do i need to orthonormalize my orbitals???
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = orthonormalize(Cbeta[kid])
-            #Cbeta[kid] = Calpha[kid].copy()
+            if jellium:
+                Cbeta[kid] = Calpha[kid].copy()
 
             # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
             #if guess_mix is True and scf_iter == 0:
@@ -1358,14 +1370,16 @@ def uks(cell, basis,
                                                            Calpha[kid], 
                                                            nalpha, 
                                                            kid, 
-                                                           v_ne = v_ne)
+                                                           v_ne = v_ne,
+                                                           jellium = jellium)
 
             # one-electron part of the energy (beta)
             one_electron_energy += get_one_electron_energy(basis, 
                                                            Cbeta[kid], 
                                                            nbeta, 
                                                            kid, 
-                                                           v_ne = v_ne)
+                                                           v_ne = v_ne,
+                                                           jellium = jellium)
 
             # coulomb part of the energy: 1/2 J
             coulomb_energy += get_coulomb_energy(basis, Calpha[kid], nalpha, kid, v_coulomb)
@@ -1382,8 +1396,9 @@ def uks(cell, basis,
 
         v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
 
-        # jellium
-        #v_coulomb *= 0.0
+        # jellium ... but only true in the thermodynamic limit
+        if jellium:
+            v_coulomb *= 0.0
 
         # exchange-correlation potential
         if xc != 'hf' :
@@ -1398,11 +1413,15 @@ def uks(cell, basis,
             if nbeta > 0:
                 my_xc_energy = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
                 xc_energy += my_xc_energy
+
             # jellium
-            xc_energy -= 0.5 * (nalpha + nbeta) * madelung
+            if not jellium:
+                xc_energy -= 0.5 * (nalpha + nbeta) * madelung
 
         # total energy
         new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
+        if jellium:
+            new_total_energy -= 0.5 * (nalpha + nbeta) * madelung
 
         # convergence in energy
         energy_diff = np.abs(new_total_energy - old_total_energy)
@@ -1413,8 +1432,10 @@ def uks(cell, basis,
         # charge
         charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
 
-        #print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf %20.12f %20.12f %20.12f %20.12f %20.12f" %  ( scf_iter, new_total_energy, energy_diff, conv, charge, np.linalg.norm(Calpha[kid] - Cbeta[kid]), np.real(one_electron_energy), np.real(coulomb_energy), np.real(xc_energy), -0.5 * (nalpha + nbeta) * madelung))
-        print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
+        if jellium:
+            print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf %20.12f %20.12f %20.12f %20.12f %20.12f" %  ( scf_iter, new_total_energy, energy_diff, conv, charge, np.linalg.norm(Calpha[kid] - Cbeta[kid]), np.real(one_electron_energy), np.real(coulomb_energy), np.real(xc_energy), -0.5 * (nalpha + nbeta) * madelung))
+        else :
+            print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
 
         if conv < d_convergence and energy_diff < e_convergence :
             break
@@ -1435,9 +1456,14 @@ def uks(cell, basis,
     print('    one-electron energy:      %20.12lf' % ( np.real(one_electron_energy) ) )
     print('    coulomb energy:           %20.12lf' % ( np.real(coulomb_energy) ) )
     print('    xc energy:                %20.12lf' % ( np.real(xc_energy) ) )
+    if jellium:
+        print('    Madelung:                 %20.12lf' % ( -0.5 * (nalpha + nbeta) * madelung) )
     print('')
-    print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
+    if jellium:
+        print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc -0.5 * (nalpha + nbeta) * madelung ) )
+    else :
+        print('    total energy:             %20.12lf' % ( np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc ) )
     print('')
 
-    return np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc, Calpha, Cbeta
+    return new_total_energy, Calpha, Cbeta
 
