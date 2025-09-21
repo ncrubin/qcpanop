@@ -481,7 +481,7 @@ def get_nuclear_electronic_potential(cell, basis, valence_charges = None):
     # this is Z_{I} * S_{I}
     rhoG = np.dot(charges, basis.SI)  
 
-    coulG = np.divide(4.0 * np.pi, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+    coulG = 4.0 * np.pi * basis.inv_g2
 
     vneG = - rhoG * coulG / basis.omega
 
@@ -1014,7 +1014,7 @@ def uks(cell, basis,
     for myg in range( len(basis.g) ):
         inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-    v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+    v_coulomb = 4.0 * np.pi * inner_rhog * basis.inv_g2
 
     # jellium ... but only true in the thermodynamic limit
     if jellium:
@@ -1105,24 +1105,18 @@ def uks(cell, basis,
         if scf_iter < diis_start_cycle:
 
             # damping?
-            #v_alpha = (1.0-damp) * v_alpha + damp * v_alpha_old
-            #v_beta = (1.0-damp) * v_beta + damp * v_beta_old
             rho_alpha = (1.0-damp) * rho_alpha + damp * rho_alpha_old
             rho_beta = (1.0-damp) * rho_beta + damp * rho_beta_old
 
-
         solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
-        #solution_vector = np.hstack( (v_alpha, v_beta) )
         new_solution_vector = diis.update(solution_vector, error_vector)
-        #v_alpha = new_solution_vector[:len(v_alpha)]
-        #v_beta = new_solution_vector[len(v_alpha):]
         rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
         rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
 
         rho_alpha.clip(min = 0)
         rho_beta.clip(min = 0)
 
-        # rebuild potentials
+        # recompute potentials
         rho = rho_alpha + rho_beta
 
         # coulomb potential
@@ -1130,7 +1124,7 @@ def uks(cell, basis,
         for myg in range( len(basis.g) ):
             inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+        v_coulomb = 4.0 * np.pi * inner_rhog * basis.inv_g2
 
         # jellium ... but only true in the thermodynamic limit
         if jellium:
@@ -1328,7 +1322,7 @@ def uks(cell, basis,
         for myg in range( len(basis.g) ):
             inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        v_coulomb = 4.0 * np.pi * np.divide(inner_rhog, basis.g2, out = np.zeros_like(basis.g2), where = basis.g2 != 0.0)
+        v_coulomb = 4.0 * np.pi * inner_rhog * basis.inv_g2
 
         # jellium ... but only true in the thermodynamic limit
         if jellium:
