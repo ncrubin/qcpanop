@@ -977,6 +977,7 @@ def uks(cell, basis,
     B_alpha_ace = []
     B_beta_ace = []
 
+    # for ace
     Ki_alpha = []
     Ki_beta = []
 
@@ -1095,8 +1096,6 @@ def uks(cell, basis,
         conv = np.linalg.norm(error_vector)
 
         # damp or extrapolate density or potential
-        rho_alpha_old = rho_alpha.copy()
-        rho_beta_old = rho_beta.copy()
         if scf_iter < diis_start_cycle:
 
             # damping?
@@ -1105,6 +1104,7 @@ def uks(cell, basis,
 
         solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
         new_solution_vector = diis.update(solution_vector, error_vector)
+
         rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
         rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
 
@@ -1280,6 +1280,10 @@ def uks(cell, basis,
 
             # coulomb part of the energy: 1/2 J
             coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
+
+        # save old density
+        rho_alpha_old = rho_alpha.copy()
+        rho_beta_old = rho_beta.copy()
 
         # exchange-correlation energy
         if xc != 'hf' :
