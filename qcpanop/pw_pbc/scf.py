@@ -1340,16 +1340,16 @@ def uks(cell, basis,
                 #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
 
             # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
-            if guess_mix is True and scf_iter == 0:
+            #if guess_mix is True and scf_iter == 0:
 
-                c = np.cos(0.05 * np.pi)
-                s = np.sin(0.05 * np.pi)
+            #    c = np.cos(0.05 * np.pi)
+            #    s = np.sin(0.05 * np.pi)
 
-                tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
-                tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
+            #    tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
+            #    tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
 
-                Calpha[kid][:, nalpha-1] = tmp1
-                Calpha[kid][:, nalpha] = tmp2
+            #    Calpha[kid][:, nalpha-1] = tmp1
+            #    Calpha[kid][:, nalpha] = tmp2
 
             # why do i need to orthonormalize my orbitals???
             Calpha[kid] = orthonormalize(Calpha[kid])
