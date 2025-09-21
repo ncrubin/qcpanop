@@ -705,7 +705,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
 def uks(cell, basis, 
         xc = 'lda', 
-        guess_mix = True, 
+        guess_mix = False, 
         e_convergence = 1e-8, 
         d_convergence = 1e-6, 
         diis_dimension = 8, 
@@ -821,6 +821,13 @@ def uks(cell, basis,
     print('    no. damping iterations:                      %20i' % ( damping_iterations ) )
     #print('    diis start iteration:                        %20i' % ( diis_start_cycle ) )
     print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
+
+    if guess_mix :
+        print("")
+        print("    ==> WARNING <==")
+        print("")
+        print("        guess_mix = True is not working and is currently disabled")
+ 
 
     print("")
     print("    ==> Begin UKS Iterations <==")

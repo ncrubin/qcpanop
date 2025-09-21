@@ -48,8 +48,7 @@ def main():
         n_kpts = [1, 1, 1])
 
     # run plane wave scf 
-    #en, ca, cb = uks(cell, basis, xc = 'hf', guess_mix = True, maxiter = 1, ace_exchange = True, jellium = True, jellium_ne = 40)
-    en, ca, cb = uks(cell, basis, xc = 'hf', guess_mix = True, maxiter = 100, ace_exchange = True)
+    en, ca, cb = uks(cell, basis, xc = 'hf', guess_mix = False, maxiter = 100, ace_exchange = True)
 
     # C / diamond / pbe / gth-pbe / 1000 ev cutoff
     #assert np.isclose(en, -10.281221451484)
