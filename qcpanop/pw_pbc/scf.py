@@ -837,14 +837,8 @@ def uks(cell, basis,
     # get nuclear repulsion energy
     enuc = cell.energy_nuc()
 
-    # coulomb and xc potentials in reciprocal space
-    v_coulomb = np.zeros(len(basis.g), dtype = 'complex128')
-    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
-    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
-
     # density in reciprocal space
     rhog = np.zeros(len(basis.g), dtype = 'complex128')
-    inner_rhog = np.zeros(len(basis.g), dtype = 'complex128')
 
     # charges
     valence_charges = cell.atom_charges()
@@ -994,33 +988,30 @@ def uks(cell, basis,
 
     v_alpha = 0 * v_ne
     v_beta = 0 * v_ne
-    v_alpha_old = 0 * v_ne
-    v_beta_old = 0 * v_ne
-
-    rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    rho_alpha_old = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-    rho_beta_old = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
     # jellium guess
     rho_alpha = nalpha / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
     rho_beta = nbeta / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
+    rho_alpha_old = rho_alpha.copy()
+    rho_beta_old = rho_beta.copy()
 
-    # rebuild potentials
+    # potentials
     rho = rho_alpha + rho_beta
 
     # coulomb potential
     tmp = np.fft.ifftn(rho)
     for myg in range( len(basis.g) ):
-        inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+        rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-    v_coulomb = 4.0 * np.pi * inner_rhog * basis.inv_g2
+    v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
 
     # jellium ... but only true in the thermodynamic limit
     if jellium:
         v_coulomb *= 0.0
 
     # exchange-correlation potential
+    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
+    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
     if xc != 'hf' :
 
         v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
@@ -1036,9 +1027,6 @@ def uks(cell, basis,
 
         v_alpha = v_coulomb + v_xc_alpha
         v_beta = v_coulomb + v_xc_beta
-
-        v_alpha_old = v_alpha
-        v_beta_old = v_beta
 
         # potential in real space
         v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
@@ -1122,9 +1110,9 @@ def uks(cell, basis,
         # coulomb potential
         tmp = np.fft.ifftn(rho)
         for myg in range( len(basis.g) ):
-            inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        v_coulomb = 4.0 * np.pi * inner_rhog * basis.inv_g2
+        v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
 
         # jellium ... but only true in the thermodynamic limit
         if jellium:
@@ -1320,9 +1308,9 @@ def uks(cell, basis,
         # coulomb potential
         tmp = np.fft.ifftn(rho)
         for myg in range( len(basis.g) ):
-            inner_rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
 
-        v_coulomb = 4.0 * np.pi * inner_rhog * basis.inv_g2
+        v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
 
         # jellium ... but only true in the thermodynamic limit
         if jellium:
