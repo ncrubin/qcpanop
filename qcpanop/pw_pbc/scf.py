@@ -70,22 +70,6 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
 
     """
 
-    # precompute indices
-
-    # FFT grid shape
-    grid_shape = basis.real_space_grid_dim  # e.g., (nx, ny, nz)
-    
-    # Precompute: for each compact G index `myg`, find its flat index in FFT grid ordering
-    flat_idx = np.empty(len(basis.g), dtype=np.int64)
-    for myg in range(len(basis.g)):
-        ix, iy, iz = get_miller_indices(myg, basis)
-        flat_idx[myg] = np.ravel_multi_index((ix, iy, iz), grid_shape)
-
-    # precompute FFT[1/|r-r'|/g2]
-    inv_g2 = np.zeros_like(basis.g2)
-    mask = basis.g2 != 0.0
-    inv_g2[mask] = 1.0 / basis.g2[mask]
-
     # accumulate exchange energy and matrix
     exchange_energy = 0.0
 
@@ -95,10 +79,10 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
             # Cij(r') = phi_i(r') phi_j*(r')
             # Cij(g) = FFT[Cij(r')]
             tmp = np.fft.ifftn(occupied_orbitals[j].conj() * occupied_orbitals[i])
-            Cij = tmp.ravel()[flat_idx]
+            Cij = tmp.ravel()[basis.flat_idx]
 
             # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-            Kij = Cij * inv_g2
+            Kij = Cij * basis.inv_g2
 
             exchange_energy += np.sum( Cij.conj() * Kij )
 
@@ -128,22 +112,6 @@ def get_exact_exchange_potential(basis, occupied_orbitals, N, C):
 
     """
 
-    # precompute indices
-
-    # FFT grid shape
-    grid_shape = basis.real_space_grid_dim  # e.g., (nx, ny, nz)
-    
-    # Precompute: for each compact G index `myg`, find its flat index in FFT grid ordering
-    flat_idx = np.empty(len(basis.g), dtype=np.int64)
-    for myg in range(len(basis.g)):
-        ix, iy, iz = get_miller_indices(myg, basis)
-        flat_idx[myg] = np.ravel_multi_index((ix, iy, iz), grid_shape)
-
-    # precompute FFT[1/|r-r'|/g2]
-    inv_g2 = np.zeros_like(basis.g2)
-    mask = basis.g2 != 0.0
-    inv_g2[mask] = 1.0 / basis.g2[mask]
-
     # accumulate exchange energy and matrix
     exchange_energy = 0.0
 
@@ -153,10 +121,10 @@ def get_exact_exchange_potential(basis, occupied_orbitals, N, C):
             # Cij(r') = phi_i(r') phi_j*(r')
             # Cij(g) = FFT[Cij(r')]
             tmp = np.fft.ifftn(occupied_orbitals[j].conj() * occupied_orbitals[i])
-            Cij = tmp.ravel()[flat_idx]
+            Cij = tmp.ravel()[basis.flat_idx]
 
             # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-            Kij = Cij * inv_g2
+            Kij = Cij * basis.inv_g2
 
             exchange_energy += np.sum( Cij.conj() * Kij )
 
@@ -177,7 +145,7 @@ def get_exact_exchange_potential(basis, occupied_orbitals, N, C):
         tmp = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
         #for myg in range( len(basis.g) ):
         #    tmp[ get_miller_indices(myg, basis) ] = phi_i[myg]
-        tmp.ravel()[flat_idx] = phi_i
+        tmp.ravel()[basis.flat_idx] = phi_i
         phi_i = np.fft.fftn(tmp)
 
         for j in range(0, N):
@@ -185,10 +153,10 @@ def get_exact_exchange_potential(basis, occupied_orbitals, N, C):
             # Cij(r') = phi_i(r') phi_j*(r')
             # Cij(g) = FFT[Cij(r')]
             tmp = np.fft.ifftn(occupied_orbitals[j].conj() * phi_i)
-            Cij = tmp.ravel()[flat_idx]
+            Cij = tmp.ravel()[basis.flat_idx]
 
             # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-            Kij_G.ravel()[flat_idx] = Cij * inv_g2 #Kij
+            Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
 
             # Kij(r) = FFT^-1[Kij(g)]
             Kij_r = np.fft.fftn(Kij_G)
@@ -896,29 +864,6 @@ def uks(cell, basis,
     coulomb_energy = 0.0
     recompute_exchange = True
 
-    # precompute indices
-
-    # FFT grid shape
-    grid_shape = basis.real_space_grid_dim  # e.g., (nx, ny, nz)
-    
-    # for each compact G index `myg`, find its flat index in FFT grid ordering
-    flat_idx = np.empty(len(basis.g), dtype=np.int64)
-    for myg in range(len(basis.g)):
-        ix, iy, iz = get_miller_indices(myg, basis)
-        flat_idx[myg] = np.ravel_multi_index((ix, iy, iz), grid_shape)
-
-    # precompute linear grid indices for each k-point
-    grid_idx_k = []
-    for kid in range ( len(basis.kpts) ):
-        ijk = np.array([get_miller_indices(ik, basis) for ik in basis.kg_to_g[kid]])
-        coords = tuple(ijk.T)
-        grid_idx_k.append(np.ravel_multi_index(coords, grid_shape))
-
-    # precompute FFT[1/|r-r'|/g2]
-    inv_g2 = np.zeros_like(basis.g2)
-    mask = basis.g2 != 0.0
-    inv_g2[mask] = 1.0 / basis.g2[mask]
-
     # so we have occ_alpha and occ_beta arrays ... won't work for kpts > 0
     my_rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
     my_rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
@@ -986,11 +931,11 @@ def uks(cell, basis,
 
         # potential in real space
         v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_alpha_r.ravel()[flat_idx] = v_alpha + v_ne
+        v_alpha_r.ravel()[basis.flat_idx] = v_alpha + v_ne
         v_alpha_r = np.fft.fftn(v_alpha_r).real
 
         v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_beta_r.ravel()[flat_idx] = v_beta + v_ne
+        v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
         v_beta_r = np.fft.fftn(v_beta_r).real
 
         # zero density for this iteration
@@ -1008,6 +953,7 @@ def uks(cell, basis,
 
         for kid in range( len(basis.kpts) ):
 
+            # TODO: don't store non-local pseudopotential in the planewave basis
             Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
             Vnl = Vnl + Vnl.conj().T
             diag = np.diag(Vnl)
@@ -1029,10 +975,10 @@ def uks(cell, basis,
                         # Cij(r') = phi_i(r') phi_j*(r')
                         # Cij(g) = FFT[Cij(r')]
                         tmp = np.fft.ifftn(occ_alpha[j].conj() * occ_alpha[i])
-                        Cij = tmp.ravel()[flat_idx]
+                        Cij = tmp.ravel()[basis.flat_idx]
 
                         # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-                        Kij_G.ravel()[flat_idx] = Cij * inv_g2 #Kij
+                        Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
 
                         # Kij(r) = FFT^-1[Kij(g)]
                         Kij_r = np.fft.fftn(Kij_G)
@@ -1046,20 +992,20 @@ def uks(cell, basis,
                 # action of potential on orbitals in real space, then transform to reciprocal space
                 tmp = v_alpha_r * occ_alpha[i] #+ Ki_r # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
 
                 Fa_c[:,i] = T[kid] * Calpha[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
                 # for ace
                 tmp = Ki_r # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                 Ki_alpha[kid][:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
 
                 # non-ace exchange
                 tmp = Ki_r # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                 exchange_alpha[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
             Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128')
@@ -1074,10 +1020,10 @@ def uks(cell, basis,
                         # Cij(r') = phi_i(r') phi_j*(r')
                         # Cij(g) = FFT[Cij(r')]
                         tmp = np.fft.ifftn(occ_beta[j].conj() * occ_beta[i])
-                        Cij = tmp.ravel()[flat_idx]
+                        Cij = tmp.ravel()[basis.flat_idx]
 
                         # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-                        Kij_G.ravel()[flat_idx] = Cij * inv_g2 #Kij
+                        Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
 
                         # Kij(r) = FFT^-1[Kij(g)]
                         Kij_r = np.fft.fftn(Kij_G)
@@ -1091,19 +1037,19 @@ def uks(cell, basis,
                 # action of potential on orbitals in real space, then transform to reciprocal space
                 tmp = v_beta_r * occ_beta[i] #+ Ki_r  # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                 Fb_c[:,i] = T[kid] * Cbeta[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
                 # for ace
                 tmp = Ki_r  # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                 Ki_beta[kid][:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
 
                 # non-ace exchange
                 tmp = Ki_r # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                 exchange_beta[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
             if xc == 'hf':
@@ -1220,11 +1166,11 @@ def uks(cell, basis,
     
         # potential in real space
         v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_alpha_r.ravel()[flat_idx] = v_alpha + v_ne
+        v_alpha_r.ravel()[basis.flat_idx] = v_alpha + v_ne
         v_alpha_r = np.fft.fftn(v_alpha_r).real
 
         v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_beta_r.ravel()[flat_idx] = v_beta + v_ne
+        v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
         v_beta_r = np.fft.fftn(v_beta_r).real
 
         one_electron_energy = 0.0
@@ -1262,9 +1208,9 @@ def uks(cell, basis,
 
                 # orbital in real space
                 #occ = np.zeros(np.prod(grid_shape), dtype=np.complex128) # eigsh
-                occ = np.zeros([np.prod(grid_shape), c.shape[1]], dtype=np.complex128) # lobpcg
-                occ[grid_idx_k[kid]] = c
-                occ = occ.reshape(grid_shape)
+                occ = np.zeros([np.prod(basis.real_space_grid_dim), c.shape[1]], dtype=np.complex128) # lobpcg
+                occ[basis.grid_idx_k[kid]] = c
+                occ = occ.reshape(basis.real_space_grid_dim)
                 occ = np.fft.fftn(occ) 
 
                 # exchange
@@ -1275,10 +1221,10 @@ def uks(cell, basis,
                         # Cij(r') = phi_i(r') phi_j*(r')
                         # Cij(g) = FFT[Cij(r')]
                         tmp = np.fft.ifftn(occ_list[j].conj() * occ)
-                        Cij = tmp.ravel()[flat_idx]
+                        Cij = tmp.ravel()[basis.flat_idx]
 
                         # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-                        Kij_G.ravel()[flat_idx] = Cij * inv_g2 #Kij
+                        Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
 
                         # Kij(r) = FFT^-1[Kij(g)]
                         Kij_r = np.fft.fftn(Kij_G)
@@ -1292,7 +1238,7 @@ def uks(cell, basis,
                 # action of potential on orbitals in real space, then transform to reciprocal space
                 tmp = my_v_r * occ  # real space, 3d
                 tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                 tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
                 tmp = tmp.reshape(c.shape) # for lobpcg
 
@@ -1315,7 +1261,7 @@ def uks(cell, basis,
                 if not ace_exchange :
                     tmp = Ki_r # real space, 3d
                     tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                    tmp = tmp.ravel()[flat_idx] # reciprocal space, large flattened basis
+                    tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
                     tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
                     tmp = tmp.reshape(c.shape) # for lobpcg
 
