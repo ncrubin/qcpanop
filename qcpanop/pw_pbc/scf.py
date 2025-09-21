@@ -709,7 +709,7 @@ def uks(cell, basis,
         e_convergence = 1e-8, 
         d_convergence = 1e-6, 
         diis_dimension = 8, 
-        damp_fock = True, 
+        damp_density = True, 
         damping_iterations = 8,
         ace_exchange = True,
         jellium = False,
@@ -726,7 +726,7 @@ def uks(cell, basis,
     :param guess_mix: do mix alpha homo and lumo to break spin symmetry?
     :param e_convergence: the convergence in the energy
     :param d_convergence: the convergence in the orbital gradient
-    :param damp_fock: do dampen fock matrix?
+    :param damp_density: do dampen density?
     :param damping_iterations: for how many iterations should we dampen the fock matrix
     :param maxiter: maximum number of scf iterations
     :return total energy
@@ -796,7 +796,7 @@ def uks(cell, basis,
 
     # damp fock matrix (helps with convergence sometimes)
     damping_factor = 1.0
-    if damp_fock :
+    if damp_density :
         damping_factor = 0.8
 
     # diis 
@@ -817,7 +817,7 @@ def uks(cell, basis,
     print('    no. alpha bands:                             %20i' % ( nalpha ) )
     print('    no. beta bands:                              %20i' % ( nbeta ) )
     print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
-    print('    damp fock matrix:                            %20s' % ( "yes" if damp_fock is True else "no" ) )
+    print('    damp density:                                %20s' % ( "yes" if damp_density is True else "no" ) )
     print('    no. damping iterations:                      %20i' % ( damping_iterations ) )
     #print('    diis start iteration:                        %20i' % ( diis_start_cycle ) )
     print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
@@ -998,7 +998,7 @@ def uks(cell, basis,
 
         # damping factor
         damp = 1.0
-        if scf_iter < diis_start_cycle and damp_fock : 
+        if scf_iter < diis_start_cycle and damp_density : 
             damp = damping_factor
 
         # orbital gradient
