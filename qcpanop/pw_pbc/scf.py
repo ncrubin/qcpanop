@@ -782,6 +782,60 @@ def build_B_ace(ne, nmo, C, Ki, exchange):
 
     return B_ace
 
+def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium):
+    """
+    compute local potentials (coulomb + local pseudopotential + xc)
+
+    :param rho_alpha: the alpha-spin density
+    :param rho_beta: the beta-spin density
+    :param v_ne: the external potential or local pseudopotential
+    :param basis: the plane wave basis object
+    :param xc: the name of the exchange-correlation potential
+    :param libxc_x_functional: the libxc exchange functional
+    :param libxc_c_functional: the libxc correlation functional
+    :param jellium: are we modeling jellium?
+
+    :return v_coulomb: the coulomb potential in reciprocal space
+    :return v_alpha_r: the alpha-spin local potential in real space
+    :return v_beta_r: the beta-spin local potential in real space
+    """
+
+    # coulomb potential
+    tmp = np.fft.ifftn(rho_alpha + rho_beta)
+    rhog = np.zeros(len(basis.g), dtype = 'complex128')
+    for myg in range( len(basis.g) ):
+        rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
+
+    v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
+
+    # jellium ... but only true in the thermodynamic limit
+    if jellium:
+        v_coulomb *= 0.0
+
+    # alpha- and beta-spin local potentials
+    v_alpha = v_coulomb.copy()
+    v_beta = v_coulomb.copy()
+
+    # exchange-correlation potential
+    if xc != 'hf' :
+
+        v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
+        xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
+
+        v_alpha += v_xc_alpha
+        v_beta +=  v_xc_beta
+
+    # alpha-spin potential in real space
+    v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    v_alpha_r.ravel()[basis.flat_idx] = v_alpha + v_ne
+    v_alpha_r = np.fft.fftn(v_alpha_r).real
+
+    # beta-spin potential in real space
+    v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
+    v_beta_r = np.fft.fftn(v_beta_r).real
+
+    return v_coulomb, v_alpha_r, v_beta_r
 def uks(cell, basis, 
         xc = 'lda', 
         guess_mix = False, 
@@ -867,7 +921,7 @@ def uks(cell, basis,
         nbeta = jellium_ne // 2
         enuc = 0.0
 
-    # damp fock matrix (helps with convergence sometimes)
+    # damp density (helps with convergence sometimes)
     damping_factor = 1.0
     if damp_density :
         damping_factor = 0.8
@@ -875,9 +929,10 @@ def uks(cell, basis,
     # diis 
     diis_start_cycle = damping_iterations
 
-    rs = (3 * basis.omega / ( 4.0 * np.pi * (nalpha + nbeta)))**(1.0/3.0)
     print("")
-    print('    Wigner-Seitz radius (rs)                     %20.12f' % (rs))
+    if jellium:
+        rs = (3 * basis.omega / ( 4.0 * np.pi * (nalpha + nbeta)))**(1.0/3.0)
+        print('    Wigner-Seitz radius (rs)                     %20.12f' % (rs))
     print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
     print('    correlation functional:                      %20s' % ( functional_name_dict[xc][1] ) )
     print('    e_convergence:                               %20.2e' % ( e_convergence ) )
@@ -901,7 +956,6 @@ def uks(cell, basis,
         print("")
         print("        guess_mix = True is not working and is currently disabled")
  
-
     print("")
     print("    ==> Begin UKS Iterations <==")
     print("")
@@ -935,18 +989,17 @@ def uks(cell, basis,
 
     for kid in range ( len(basis.kpts) ):
 
-        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-3)
-        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-3)
-        #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
-        #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128'))
+        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-8)
+        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-8)
+        #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128'))
+        #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128'))
         for i in range (nmo_alpha):
             Calpha[kid][i, i] = 1.0
         for i in range (nmo_beta):
             Cbeta[kid][i, i] = 1.0
         Calpha[kid] = orthonormalize(Calpha[kid])
-        #Cbeta[kid] = orthonormalize(Cbeta[kid])
-        Cbeta[kid] = Calpha[kid].copy()
-
+        Cbeta[kid] = orthonormalize(Cbeta[kid])
+        #Cbeta[kid] = Calpha[kid].copy()
 
         B_alpha_ace.append(np.zeros((nmo_alpha, nmo_alpha), dtype='complex128'))
         B_beta_ace.append(np.zeros((nmo_beta, nmo_beta), dtype='complex128'))
@@ -957,7 +1010,26 @@ def uks(cell, basis,
         epsilon_alpha.append(np.zeros((nmo_alpha), dtype='complex128'))
         epsilon_beta.append(np.zeros((nmo_beta), dtype='complex128'))
 
-    # diis extrapolates fock matrix
+    # initialize occ_alpha and occ_beta arrays ... won't work for kpts > 0
+    rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
+    rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
+
+    # kinetic energy
+    T = []
+    for kid in range ( len(basis.kpts) ):
+        kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
+        T.append(np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0)
+
+    # jellium guess
+    rho_alpha = nalpha / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
+    rho_beta = nbeta / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
+    rho_alpha_old = rho_alpha.copy()
+    rho_beta_old = rho_beta.copy()
+
+    # local potentials
+    v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
+
+    # diis extrapolates the alpha- and beta-spin densities
     from pyscf import lib
     diis = lib.diis.DIIS()
     diis.space = diis_dimension
@@ -967,87 +1039,22 @@ def uks(cell, basis,
     scf_iter = 0 # initialize variable incase maxiter = 0
     one_electron_energy = 0.0
     coulomb_energy = 0.0
-    recompute_exchange = True
-
-    # so we have occ_alpha and occ_beta arrays ... won't work for kpts > 0
-    my_rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
-    my_rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
-
-    # kinetic energy
-    T = []
-    for kid in range ( len(basis.kpts) ):
-        kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
-        T.append(np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0)
-
-        #epsilon_alpha, Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nmo-1))
-        #Calpha[kid] = orthonormalize(Calpha[kid])
-        #Cbeta[kid] = Calpha[kid].copy()
-
-    #print(2*np.sum(np.sort(T[0])[:nalpha]))
-    #exit()
-
-    v_alpha = 0 * v_ne
-    v_beta = 0 * v_ne
-
-    # jellium guess
-    rho_alpha = nalpha / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
-    rho_beta = nbeta / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
-    rho_alpha_old = rho_alpha.copy()
-    rho_beta_old = rho_beta.copy()
-
-    # potentials
-    rho = rho_alpha + rho_beta
-
-    # coulomb potential
-    tmp = np.fft.ifftn(rho)
-    for myg in range( len(basis.g) ):
-        rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-    v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
-
-    # jellium ... but only true in the thermodynamic limit
-    if jellium:
-        v_coulomb *= 0.0
-
-    # exchange-correlation potential
-    v_xc_alpha = np.zeros(len(basis.g), dtype = 'complex128')
-    v_xc_beta = np.zeros(len(basis.g), dtype = 'complex128')
-    if xc != 'hf' :
-
-        v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-        xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-
-    v_alpha = v_coulomb + v_xc_alpha
-    v_beta = v_coulomb + v_xc_beta
 
     for scf_iter in range(maxiter):
 
         one_electron_energy = 0.0
         coulomb_energy = 0.0
 
-        v_alpha = v_coulomb + v_xc_alpha
-        v_beta = v_coulomb + v_xc_beta
-
-        # potential in real space
-        v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_alpha_r.ravel()[basis.flat_idx] = v_alpha + v_ne
-        v_alpha_r = np.fft.fftn(v_alpha_r).real
-
-        v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
-        v_beta_r = np.fft.fftn(v_beta_r).real
-
-        # zero density for this iteration
-        rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+        # compute local potentials
+        v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
 
         # damping factor
         damp = 1.0
         if scf_iter < diis_start_cycle and damp_density : 
             damp = damping_factor
 
-        # orbital gradient
+        # evaluate the orbital gradient
         error_vector = np.zeros(0)
-
         for kid in range( len(basis.kpts) ):
 
             # TODO: don't store non-local pseudopotential in the planewave basis
@@ -1084,7 +1091,7 @@ def uks(cell, basis,
 
             error_vector = np.hstack( (error_vector, grad_a.flatten(), grad_b.flatten() ) )
 
-        # norm of orbital gradient
+        # norm of the orbital gradient for convergence check
         conv = np.linalg.norm(error_vector)
 
         # damp or extrapolate density or potential
@@ -1104,37 +1111,8 @@ def uks(cell, basis,
         rho_alpha.clip(min = 0)
         rho_beta.clip(min = 0)
 
-        # recompute potentials
-        rho = rho_alpha + rho_beta
-
-        # coulomb potential
-        tmp = np.fft.ifftn(rho)
-        for myg in range( len(basis.g) ):
-            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-        v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
-
-        # jellium ... but only true in the thermodynamic limit
-        if jellium:
-            v_coulomb *= 0.0
-
-        # exchange-correlation potential
-        if xc != 'hf' :
-
-            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-            xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-
-        v_alpha = v_coulomb + v_xc_alpha
-        v_beta = v_coulomb + v_xc_beta
-    
-        # potential in real space
-        v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_alpha_r.ravel()[basis.flat_idx] = v_alpha + v_ne
-        v_alpha_r = np.fft.fftn(v_alpha_r).real
-
-        v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
-        v_beta_r = np.fft.fftn(v_beta_r).real
+        # recompute potentials after damping / diis extrapolation
+        v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
 
         one_electron_energy = 0.0
         coulomb_energy = 0.0
@@ -1303,23 +1281,8 @@ def uks(cell, basis,
             # coulomb part of the energy: 1/2 J
             coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
 
-        rho = rho_alpha + rho_beta
-
-        # coulomb potential
-        tmp = np.fft.ifftn(rho)
-        for myg in range( len(basis.g) ):
-            rhog[myg] = tmp[ get_miller_indices(myg, basis) ]
-
-        v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
-
-        # jellium ... but only true in the thermodynamic limit
-        if jellium:
-            v_coulomb *= 0.0
-
-        # exchange-correlation potential
+        # exchange-correlation energy
         if xc != 'hf' :
-
-            v_xc_alpha, v_xc_beta = get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
             xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
 
         else :
@@ -1346,7 +1309,7 @@ def uks(cell, basis,
         old_total_energy = new_total_energy
 
         # charge
-        charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho))
+        charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho_alpha + rho_beta))
 
         if jellium:
             print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf %20.12f %20.12f %20.12f %20.12f %20.12f" %  ( scf_iter, new_total_energy, energy_diff, conv, charge, np.linalg.norm(Calpha[kid] - Cbeta[kid]), np.real(one_electron_energy), np.real(coulomb_energy), np.real(xc_energy), -0.5 * (nalpha + nbeta) * madelung))
