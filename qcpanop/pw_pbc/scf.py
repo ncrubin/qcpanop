@@ -673,7 +673,7 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
 def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
     """
-    evaluate action of fock matrix on orbitals
+    evaluate action of fock matrix on orbitals and build ace operator
 
     :param basis: the plane wave basis object
     :param kid: the current k-point
@@ -691,7 +691,6 @@ def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
     :return Ki: exchange operator acting on orbitals, i, in reciprocal space
     :return exchange: the exchange matrix
     """
-
 
     Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
     Ki = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
@@ -741,6 +740,90 @@ def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
         exchange[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
     return F_c, Ki, exchange
+
+def fock_on_orbitals_using_ace(basis, kid, ne, nmo, occ, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange):
+    """
+    apply fock operator to a set of orbitals using the ace operator
+
+    :param basis: the plane wave basis object
+    :param kid: the current k-point
+    :param ne: number of electrons
+    :param nmo: number of bands (could be larger than ne)
+    :param occ: occupied orbitals, in real space
+    :param C: occupied orbitals, in reciprocal space
+    :param T: diagonal of the kinetic energy matrix, in reciprocal space
+    :param v_r: the potential (coulomb + local pseudopotential + xc), in real space
+    :param Vnl: matrix representation of non-local pseudopotential, in reciprocal space
+    :param xc: the exchange-correlation functional
+    :param Ki: exchange operator acting on orbitals, i, in reciprocal space
+    :param B: ACE B matrix
+    :param ace_exchange: do use the ace operator for exchange?
+
+    :return F @ c: action of fock operator on the orbitals in reciprococal space
+    """
+
+    # orbital in real space
+    occ = np.zeros([np.prod(basis.real_space_grid_dim), c.shape[1]], dtype=np.complex128) # lobpcg
+    occ[basis.grid_idx_k[kid]] = c
+    occ = occ.reshape(basis.real_space_grid_dim)
+    occ = np.fft.fftn(occ) 
+
+    # exchange
+    Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    if xc == 'hf' and not ace_exchange:
+        for j in range(0, ne):
+
+            # Cij(r') = phi_i(r') phi_j*(r')
+            # Cij(g) = FFT[Cij(r')]
+            tmp = np.fft.ifftn(occ_list[j].conj() * occ)
+            Cij = tmp.ravel()[basis.flat_idx]
+
+            # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+            Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
+
+            # Kij(r) = FFT^-1[Kij(g)]
+            Kij_r = np.fft.fftn(Kij_G)
+
+            # action of K on an occupied orbital, i: 
+            # Ki(r) = sum_j Kij(r) phi_j(r)
+            Ki_r += Kij_r * occ_list[j]
+
+        Ki_r *= -4.0 * np.pi / basis.omega
+
+    # action of potential on orbitals in real space, then transform to reciprocal space
+    tmp = v_r * occ  # real space, 3d
+    tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+    tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+    tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+    tmp = tmp.reshape(c.shape) # for lobpcg
+
+    #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
+    F_c = T[kid][:, None] * c + tmp + Vnl @ c # lobpcg
+
+    if xc == 'hf':
+        if ace_exchange :
+
+            # (< phi_j | K) | c >
+            tmp = Ki.conj().T @ c
+            # sum_j B_{ij} < phi_j | K | c > 
+            tmp = B_ace @ tmp 
+            # sum_i K | phi_i >  B_{ij} < phi_j | K | c >
+            ace = Ki @ tmp 
+
+            F_c += ace
+ 
+        else :
+
+            tmp = Ki_r # real space, 3d
+            tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+            tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+            tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+            tmp = tmp.reshape(c.shape) # for lobpcg
+            F_c += tmp
+
+    #print(np.linalg.norm(ace - tmp))
+
+    return F_c
 
 def build_B_ace(ne, nmo, C, Ki, exchange):
     """
@@ -836,6 +919,7 @@ def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_funct
     v_beta_r = np.fft.fftn(v_beta_r).real
 
     return v_coulomb, v_alpha_r, v_beta_r
+
 def uks(cell, basis, 
         xc = 'lda', 
         guess_mix = False, 
@@ -955,7 +1039,7 @@ def uks(cell, basis,
         print("    ==> WARNING <==")
         print("")
         print("        guess_mix = True is not working and is currently disabled")
- 
+
     print("")
     print("    ==> Begin UKS Iterations <==")
     print("")
@@ -1134,100 +1218,19 @@ def uks(cell, basis,
             if jellium:
                 Vnl *= 0.0
 
-            def apply_fock_operator_to_orbital(c):
-                """
-                apply fock operator to an orbital. note that the function depends on 
-                some parameters not passed in as argumnets
+            def lobpcg_alpha(c):
+                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, occ_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange)
 
-                :param c: orbital in reciprococal space
-                :return F @ c: action of fock operator on the orbital in reciprococal space
-
-                :implicit parameter my_N: the number of electrons of the same spin as orbital c 
-                :implicit parameter occ_list: a list of occupied orbitals in real space with the same spin as orbital c
-                :implicit parameter my_v_r: the potential in real space experienced by orbital c (excluding exchange)
-                """
-
-                # orbital in real space
-                #occ = np.zeros(np.prod(grid_shape), dtype=np.complex128) # eigsh
-                occ = np.zeros([np.prod(basis.real_space_grid_dim), c.shape[1]], dtype=np.complex128) # lobpcg
-                occ[basis.grid_idx_k[kid]] = c
-                occ = occ.reshape(basis.real_space_grid_dim)
-                occ = np.fft.fftn(occ) 
-
-                # exchange
-                Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-                if xc == 'hf' and not ace_exchange:
-                    for j in range(0, my_N):
-
-                        # Cij(r') = phi_i(r') phi_j*(r')
-                        # Cij(g) = FFT[Cij(r')]
-                        tmp = np.fft.ifftn(occ_list[j].conj() * occ)
-                        Cij = tmp.ravel()[basis.flat_idx]
-
-                        # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-                        Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
-
-                        # Kij(r) = FFT^-1[Kij(g)]
-                        Kij_r = np.fft.fftn(Kij_G)
-
-                        # action of K on an occupied orbital, i: 
-                        # Ki(r) = sum_j Kij(r) phi_j(r)
-                        Ki_r += Kij_r * occ_list[j]
-
-                    Ki_r *= -4.0 * np.pi / basis.omega
-
-                # action of potential on orbitals in real space, then transform to reciprocal space
-                tmp = my_v_r * occ  # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-                tmp = tmp.reshape(c.shape) # for lobpcg
-
-                #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
-                F_c = T[kid][:, None] * c + tmp + Vnl @ c # lobpcg
-
-                # ace
-
-                # (< phi_j | K) | c >
-                tmp = my_Ki.conj().T @ c
-                # sum_j B_{ij} < phi_j | K | c > 
-                tmp = my_B @ tmp 
-                # sum_i K | phi_i >  B_{ij} < phi_j | K | c >
-                ace = my_Ki @ tmp 
-
-                if ace_exchange :
-                    F_c += ace
-
-                # exact exchange
-                if not ace_exchange :
-                    tmp = Ki_r # real space, 3d
-                    tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                    tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                    tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-                    tmp = tmp.reshape(c.shape) # for lobpcg
-
-                    F_c += tmp
-
-                #print(np.linalg.norm(ace - tmp))
-
-                return F_c
-
-            F_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=apply_fock_operator_to_orbital, dtype='complex128')
+            def lobpcg_beta(c):
+                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, occ_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange)
 
             if not jellium:
-                my_N = nalpha
-                occ_list = occ_alpha.copy()
-                my_v_r = v_alpha_r.copy()
-                my_Ki = Ki_alpha[kid].copy()
-                my_B = B_alpha_ace[kid].copy()
-                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
-                my_N = nbeta
-                occ_list = occ_beta.copy()
-                my_v_r = v_beta_r.copy()
-                my_Ki = Ki_beta[kid].copy()
-                my_B = B_beta_ace[kid].copy()
-                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
+                Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
+                Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
+
+                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
+                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
             else :
                 epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
@@ -1242,8 +1245,8 @@ def uks(cell, basis,
             #    tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
             #    tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
 
-            #    Calpha[kid][:, nalpha-1] = tmp1
-            #    Calpha[kid][:, nalpha] = tmp2
+            #    Calpha[kid][:, nalpha-1] = tmp1.copy()
+            #    Calpha[kid][:, nalpha] = tmp2.copy()
 
             # why do i need to orthonormalize my orbitals???
             Calpha[kid] = orthonormalize(Calpha[kid])
