@@ -671,6 +671,117 @@ def get_coulomb_energy(basis, C, N, kid, v_coulomb):
 
     return coulomb_energy
 
+def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
+    """
+    evaluate action of fock matrix on orbitals
+
+    :param basis: the plane wave basis object
+    :param kid: the current k-point
+    :param ne: number of electrons
+    :param nmo: number of bands (could be larger than ne)
+    :param occ: occupied orbitals, in real space
+    :param C: occupied orbitals, in reciprocal space
+    :param T: diagonal of the kinetic energy matrix, in reciprocal space
+    :param v_r: the potential (coulomb + local pseudopotential + xc), in real space
+    :param Vnl: matrix representation of non-local pseudopotential, in reciprocal space
+    :param xc: the exchange-correlation functional
+
+
+    :return F_c: the action of the fock matrix on the orbials
+    :return Ki: exchange operator acting on orbitals, i, in reciprocal space
+    :return exchange: the exchange matrix
+    """
+
+
+    Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    Ki = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+    F_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+    exchange = np.zeros((basis.n_plane_waves_per_k[kid], nmo), dtype='complex128')
+    for i in range (nmo):
+
+        # exchange
+        Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+        if xc == 'hf':
+            for j in range(0, ne):
+
+                # Cij(r') = phi_i(r') phi_j*(r')
+                # Cij(g) = FFT[Cij(r')]
+                tmp = np.fft.ifftn(occ[j].conj() * occ[i])
+                Cij = tmp.ravel()[basis.flat_idx]
+
+                # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+                Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
+
+                # Kij(r) = FFT^-1[Kij(g)]
+                Kij_r = np.fft.fftn(Kij_G)
+
+                # action of K on an occupied orbital, i: 
+                # Ki(r) = sum_j Kij(r) phi_j(r)
+                Ki_r += Kij_r * occ[j]
+
+            Ki_r *= -4.0 * np.pi / basis.omega
+
+        # action of potential on orbitals in real space, then transform to reciprocal space
+        tmp = v_r * occ[i] #+ Ki_r # real space, 3d
+        tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+        tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+
+        F_c[:,i] = T[kid] * C[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
+
+        # for ace
+        tmp = Ki_r # real space, 3d
+        tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+        tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+        Ki[:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+
+        # non-ace exchange
+        tmp = Ki_r # real space, 3d
+        tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
+        tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+        exchange[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
+
+    return F_c, Ki, exchange
+
+def build_B_ace(ne, nmo, C, Ki, exchange):
+    """
+    build B matrix for ACE
+    see text after Eq. 13 of J. Chem. Theory Comput. 12, 2242-2249 (2016).
+
+    :param ne: number of electrons
+    :param nmo: number of bands (could be greater than ne)
+    :param C: orbital coefficients in reciprocal space
+    :param Ki: action of exchange operator on orbitals in reciprocal space
+    :param exchange: exchange contribution to fock matrix (exact, for testing ace)
+
+    :return B_ace: the B matrix for ACE
+    """
+
+    # for ace < phi_i | Kj>^{-1}
+    tmp = -C[:, :nmo].conj().T @ Ki
+    L = np.linalg.cholesky(tmp)
+
+    # how's our cholesky decomposition looking?
+    assert (np.allclose(tmp, L @ L.conj().T))
+
+    Linv = np.linalg.inv(L)
+    B_ace = -Linv.conj().T @ Linv
+
+    # how's our inverse looking?
+    assert (np.allclose(-tmp @ B_ace, np.eye(tmp.shape[0])))
+
+    # test ACE representation of exchange
+
+    # (< phi_j | K) | c >
+    tmp = Ki.conj().T @ C[:, :nmo]
+    # sum_j B_{ij} < phi_j | K | c > 
+    tmp = B_ace @ tmp 
+    # sum_i K | phi_i >  B_{ij} < phi_j | K | c >
+    ace = Ki @ tmp 
+
+    assert (np.allclose(ace, exchange))
+
+    return B_ace
+
 def uks(cell, basis, 
         xc = 'lda', 
         guess_mix = False, 
@@ -815,8 +926,8 @@ def uks(cell, basis,
     epsilon_beta = []
 
     # for ace
-    Binv_alpha_ace = []
-    Binv_beta_ace = []
+    B_alpha_ace = []
+    B_beta_ace = []
 
     Ki_alpha = []
     Ki_beta = []
@@ -843,8 +954,8 @@ def uks(cell, basis,
         Cbeta[kid] = Calpha[kid].copy()
 
 
-        Binv_alpha_ace.append(np.zeros((nmo_alpha, nmo_alpha), dtype='complex128'))
-        Binv_beta_ace.append(np.zeros((nmo_beta, nmo_beta), dtype='complex128'))
+        B_alpha_ace.append(np.zeros((nmo_alpha, nmo_alpha), dtype='complex128'))
+        B_beta_ace.append(np.zeros((nmo_beta, nmo_beta), dtype='complex128'))
 
         Ki_alpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128'))
         Ki_beta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128'))
@@ -949,8 +1060,6 @@ def uks(cell, basis,
         # orbital gradient
         error_vector = np.zeros(0)
 
-        Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-
         for kid in range( len(basis.kpts) ):
 
             # TODO: don't store non-local pseudopotential in the planewave basis
@@ -963,144 +1072,16 @@ def uks(cell, basis,
             if jellium:
                 Vnl *= 0.0
 
-            Fa_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128')
-            exchange_alpha = np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128')
-            for i in range (nmo_alpha):
-
-                # exchange
-                Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-                if xc == 'hf':
-                    for j in range(0, nalpha):
-
-                        # Cij(r') = phi_i(r') phi_j*(r')
-                        # Cij(g) = FFT[Cij(r')]
-                        tmp = np.fft.ifftn(occ_alpha[j].conj() * occ_alpha[i])
-                        Cij = tmp.ravel()[basis.flat_idx]
-
-                        # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-                        Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
-
-                        # Kij(r) = FFT^-1[Kij(g)]
-                        Kij_r = np.fft.fftn(Kij_G)
-
-                        # action of K on an occupied orbital, i: 
-                        # Ki(r) = sum_j Kij(r) phi_j(r)
-                        Ki_r += Kij_r * occ_alpha[j]
-
-                    Ki_r *= -4.0 * np.pi / basis.omega
-
-                # action of potential on orbitals in real space, then transform to reciprocal space
-                tmp = v_alpha_r * occ_alpha[i] #+ Ki_r # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-
-                Fa_c[:,i] = T[kid] * Calpha[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
-
-                # for ace
-                tmp = Ki_r # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                Ki_alpha[kid][:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-
-                # non-ace exchange
-                tmp = Ki_r # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                exchange_alpha[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
-
-            Fb_c = np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128')
-            exchange_beta = np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128')
-            for i in range (nmo_beta):
-
-                # exchange
-                Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-                if xc == 'hf':
-                    for j in range(0, nbeta):
-
-                        # Cij(r') = phi_i(r') phi_j*(r')
-                        # Cij(g) = FFT[Cij(r')]
-                        tmp = np.fft.ifftn(occ_beta[j].conj() * occ_beta[i])
-                        Cij = tmp.ravel()[basis.flat_idx]
-
-                        # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-                        Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
-
-                        # Kij(r) = FFT^-1[Kij(g)]
-                        Kij_r = np.fft.fftn(Kij_G)
-
-                        # action of K on an occupied orbital, i: 
-                        # Ki(r) = sum_j Kij(r) phi_j(r)
-                        Ki_r += Kij_r * occ_beta[j]
-
-                    Ki_r *= -4.0 * np.pi / basis.omega 
-
-                # action of potential on orbitals in real space, then transform to reciprocal space
-                tmp = v_beta_r * occ_beta[i] #+ Ki_r  # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                Fb_c[:,i] = T[kid] * Cbeta[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
-
-                # for ace
-                tmp = Ki_r  # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                Ki_beta[kid][:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-
-                # non-ace exchange
-                tmp = Ki_r # real space, 3d
-                tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-                tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-                exchange_beta[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
+            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, occ_alpha, Calpha, T, v_alpha_r, Vnl, xc)
+            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, occ_beta, Cbeta, T, v_beta_r, Vnl, xc)
 
             if xc == 'hf':
 
-                # for ace < phi_i | Kj>^{-1}
-                tmp = -Calpha[kid][:, :nmo_alpha].conj().T @ Ki_alpha[kid]
-                L = np.linalg.cholesky(tmp)
+                B_alpha_ace[kid] = build_B_ace(nalpha, nmo_alpha, Calpha[kid], Ki_alpha[kid], exchange_alpha)
+                B_beta_ace[kid] = build_B_ace(nbeta, nmo_beta, Cbeta[kid], Ki_beta[kid], exchange_beta)
 
-                # how's our cholesky decomposition looking?
-                assert (np.allclose(tmp, L @ L.conj().T))
-
-                Linv = np.linalg.inv(L)
-                Binv_alpha_ace[kid] = -Linv.conj().T @ Linv
-
-                # how's our inverse looking?
-                assert (np.allclose(-tmp @ Binv_alpha_ace[kid], np.eye(tmp.shape[0])))
-
-                tmp = -Cbeta[kid][:, :nmo_beta].conj().T @ Ki_beta[kid]
-                L = np.linalg.cholesky(tmp)
-
-                # how's our cholesky decomposition looking?
-                assert (np.allclose(tmp, L @ L.conj().T))
-
-                Linv = np.linalg.inv(L)
-                Binv_beta_ace[kid] = -Linv.conj().T @ Linv
-
-                # how's our inverse looking?
-                assert (np.allclose(-tmp @ Binv_beta_ace[kid], np.eye(tmp.shape[0])))
-
-                # for ace
-
-                # (< phi_j | K) | c >
-                tmp = Ki_alpha[kid].conj().T @ Calpha[kid][:, :nmo_alpha]
-                # sum_j Binv_{ij} < phi_j | K | c > 
-                tmp = Binv_alpha_ace[kid] @ tmp 
-                # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
-                ace_alpha = Ki_alpha[kid] @ tmp 
-
-                # < phi_j | K | c >
-                tmp = Ki_beta[kid].conj().T @ Cbeta[kid][:, :nmo_beta]
-                # sum_j Binv_{ij} < phi_j | K | c > 
-                tmp = Binv_beta_ace[kid] @ tmp 
-                # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
-                ace_beta = Ki_beta[kid] @ tmp 
-
-                # is ace representation equivalent to original exact exchange representation?
-                assert (np.allclose(ace_alpha, exchange_alpha))
-                assert (np.allclose(ace_beta, exchange_beta))
-
-                Fa_c += ace_alpha
-                Fb_c += ace_beta
+                Fa_c += exchange_alpha
+                Fb_c += exchange_beta
             
             Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
             Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
@@ -1249,9 +1230,9 @@ def uks(cell, basis,
 
                 # (< phi_j | K) | c >
                 tmp = my_Ki.conj().T @ c
-                # sum_j Binv_{ij} < phi_j | K | c > 
-                tmp = my_Binv @ tmp 
-                # sum_i K | phi_i >  Binv_{ij} < phi_j | K | c >
+                # sum_j B_{ij} < phi_j | K | c > 
+                tmp = my_B @ tmp 
+                # sum_i K | phi_i >  B_{ij} < phi_j | K | c >
                 ace = my_Ki @ tmp 
 
                 if ace_exchange :
@@ -1278,14 +1259,14 @@ def uks(cell, basis,
                 occ_list = occ_alpha.copy()
                 my_v_r = v_alpha_r.copy()
                 my_Ki = Ki_alpha[kid].copy()
-                my_Binv = Binv_alpha_ace[kid].copy()
+                my_B = B_alpha_ace[kid].copy()
                 epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(F_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
                 my_N = nbeta
                 occ_list = occ_beta.copy()
                 my_v_r = v_beta_r.copy()
                 my_Ki = Ki_beta[kid].copy()
-                my_Binv = Binv_beta_ace[kid].copy()
+                my_B = B_beta_ace[kid].copy()
                 epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(F_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
             else :
