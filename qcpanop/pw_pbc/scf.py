@@ -848,8 +848,8 @@ def uks(cell, basis,
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
     # warning: ace has trouble for nmo > ne with eigsh, but lobpcg seems to work
-    nmo_alpha = nalpha + 1
-    nmo_beta = nbeta + 1
+    nmo_alpha = nalpha #+ 1
+    nmo_beta = nbeta #+ 1
     #if nbeta > nalpha:  
     #    nmo = nbeta
 
