@@ -638,6 +638,7 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None, jellium = False):
 
     return one_electron_energy
 
+# TODO: don't store any npw x npw objects
 def get_coulomb_energy(basis, C, N, kid, v_coulomb):
     """
 
@@ -1166,8 +1167,8 @@ def uks(cell, basis,
             Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
             Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
 
-            #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nalpha] * Calpha[kid][:,:nalpha]
-            #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nbeta] * Cbeta[kid][:,:nbeta]
+            #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nmo_alpha] * Calpha[kid][:,:nmo_alpha]
+            #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nmo_beta] * Cbeta[kid][:,:nmo_beta]
 
             c_Fa_c = Calpha[kid][:, :nmo_alpha].conj().T @ Fa_c
             c_Fb_c = Cbeta[kid][:, :nmo_beta].conj().T @ Fb_c
@@ -1233,8 +1234,18 @@ def uks(cell, basis,
                 epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
 
             else :
-                epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
+                #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
                 #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
+
+                eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
+                epsilon_alpha[kid], Calpha[kid] = eps_a[:nalpha], ca[:, :nalpha]
+
+                #lowest_energy_T_index = np.argsort(T[kid])[:nalpha]
+                ##test = T[kid][lowest_energy_T_index]
+                #epsilon_alpha[kid] = T[kid][lowest_energy_T_index]
+                #Calpha[kid] = np.zeros((len(T[kid]), nalpha), dtype=np.complex128)
+                #for orb_idx, pw_idx in enumerate(lowest_energy_T_index):
+                #    Calpha[kid][pw_idx, orb_idx] = 1.
 
             # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
             #if guess_mix is True and scf_iter == 0:

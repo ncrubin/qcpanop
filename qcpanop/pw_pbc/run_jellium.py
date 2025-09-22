@@ -46,7 +46,8 @@ def main():
     en, ca, cb = uks(cell, basis, xc = 'hf', guess_mix = False, maxiter = 1, ace_exchange = True, jellium = True, jellium_ne = 100)
 
     # jellium / 3.22 ev / omega = 2^18 / ne = 100
-    assert np.isclose(en, -3.932033059623)
+    #assert np.isclose(en, -3.932033059623)
+    assert np.isclose(en, -3.939694759636)
 
     # C / diamond / hf / gth-pbe / 500 ev cutoff
     #assert np.isclose(en, -10.061105991782)
