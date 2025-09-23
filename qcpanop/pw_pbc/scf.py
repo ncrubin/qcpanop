@@ -594,39 +594,28 @@ def form_fock_matrix(basis, kid, v = None):
 
     return fock
 
-def get_one_electron_energy(basis, C, N, kid, v_ne = None, jellium = False):
+# TODO: eliminate npw x npw storage
+def get_nonlocal_pp_energy(basis, C, N, kid):
     """
 
-    get one-electron part of the energy
+    get nonlocal pseudopotential part of the energy
 
     :param basis: plane wave basis information
     :param C: molecular orbital coefficients
     :param N: the number of electrons
     :param kid: index for a given k-point
-    :param v_ne: nuclear electron potential or local part of the pseudopotential
 
-    :return one_electron_energy: the one-electron energy
+    :return one_electron_energy: the nonlocal pseudopotential part of the energy
 
     """
 
     # oei = T + V 
     oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
 
-    # jellium
-    if not jellium:
-        if v_ne is not None:
-            oei += get_matrix_elements(basis, kid, v_ne)
-
-        if basis.use_pseudopotential:
-            oei += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-
-    kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
-    T = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 
-    diagonals = T + oei.diagonal()
-    np.fill_diagonal(oei, diagonals)
+    if basis.use_pseudopotential:
+        oei = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
     oei = oei + oei.conj().T
-
     diag = np.diag(oei)
     np.fill_diagonal(oei, 0.5 * diag)
 
@@ -634,9 +623,9 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None, jellium = False):
     for pp in range(N):
         tmporbs[:, pp] = C[:, pp]
 
-    one_electron_energy = np.einsum('pi,pq,qi->',tmporbs.conj(), oei, tmporbs) / len(basis.kpts)
+    nonlocal_pp_energy = np.einsum('pi,pq,qi->',tmporbs.conj(), oei, tmporbs) / len(basis.kpts)
 
-    return one_electron_energy
+    return nonlocal_pp_energy
 
 def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
     """
@@ -1239,21 +1228,21 @@ def uks(cell, basis,
             rho_alpha += my_rho_alpha.clip(min = 0)
             rho_beta += my_rho_beta.clip(min = 0)
 
-            # one-electron part of the energy (alpha)
-            one_electron_energy += get_one_electron_energy(basis, 
-                                                           Calpha[kid], 
-                                                           nalpha, 
-                                                           kid, 
-                                                           v_ne = v_ne,
-                                                           jellium = jellium)
+            # kinetic energy part of the one-electron energy
+            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nalpha])**2, T[kid]))
+            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nbeta])**2, T[kid]))
 
-            # one-electron part of the energy (beta)
-            one_electron_energy += get_one_electron_energy(basis, 
-                                                           Cbeta[kid], 
-                                                           nbeta, 
-                                                           kid, 
-                                                           v_ne = v_ne,
-                                                           jellium = jellium)
+            # nonlocal pseudopotential part of the energy
+            if not jellium:
+                one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nalpha, kid)
+                one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nbeta, kid)
+
+        # nuclear potential / local pseudopotential part of the one-electron energy
+        if not jellium:
+            v_ne_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+            v_ne_r.ravel()[basis.flat_idx] = v_ne
+            v_ne_r = np.fft.fftn(v_ne_r).real
+            one_electron_energy += ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum((rho_alpha + rho_beta) * v_ne_r)
 
         # coulomb part of the energy: 1/2 J
         v_coulomb_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
