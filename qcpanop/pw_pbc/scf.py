@@ -638,40 +638,6 @@ def get_one_electron_energy(basis, C, N, kid, v_ne = None, jellium = False):
 
     return one_electron_energy
 
-# TODO: don't store any npw x npw objects
-def get_coulomb_energy(basis, C, N, kid, v_coulomb):
-    """
-
-    get the coulomb contribution to the energy
-
-    :param basis: plane wave basis information
-    :param C: molecular orbital coefficients
-    :param N: the number of electrons
-    :param kid: index for a given k-point
-    :param v_coulomb: the coulomb potential
-
-    :return coulomb_energy: the coulomb contribution to the energy
-
-    """
-
-    # oei = 1/2 J
-    oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
-    oei = get_matrix_elements(basis, kid, v_coulomb)
-
-    # only upper triangle of oei is populated ... symmetrize and rescale diagonal
-    oei = oei + oei.conj().T
-    
-    diag = np.diag(oei)
-    np.fill_diagonal(oei, 0.5 * diag)
-
-    tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'complex128')
-    for pp in range(N):
-        tmporbs[:, pp] = C[:, pp]
-
-    coulomb_energy = 0.5 * np.einsum('pi,pq,qi->',tmporbs.conj(), oei, tmporbs) / len(basis.kpts)
-
-    return coulomb_energy
-
 def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
     """
     evaluate action of fock matrix on orbitals and build ace operator
@@ -1289,11 +1255,11 @@ def uks(cell, basis,
                                                            v_ne = v_ne,
                                                            jellium = jellium)
 
-            # coulomb part of the energy: 1/2 J
-            coulomb_energy += get_coulomb_energy(basis, Calpha[kid], nalpha, kid, v_coulomb)
-
-            # coulomb part of the energy: 1/2 J
-            coulomb_energy += get_coulomb_energy(basis, Cbeta[kid], nbeta, kid, v_coulomb)
+        # coulomb part of the energy: 1/2 J
+        v_coulomb_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+        v_coulomb_r.ravel()[basis.flat_idx] = v_coulomb
+        v_coulomb_r = np.fft.fftn(v_coulomb_r).real
+        coulomb_energy = 0.5 * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum((rho_alpha + rho_beta) * v_coulomb_r)
 
         # save old density
         rho_alpha_old = rho_alpha.copy()
