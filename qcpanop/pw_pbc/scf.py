@@ -88,92 +88,6 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
 
     return -2.0 * np.pi / basis.omega * exchange_energy
 
-
-def get_exact_exchange_potential(basis, occupied_orbitals, N, C):
-    """
-
-    evaluate the exact Hartree-Fock exchange energy, according to
-
-        Ex = - 2 pi / Omega sum_{mn in occ} sum_{g} |Cmn(g)|^2 / |g|^2
-
-    where
-
-        Cmn(g) = FT[ phi_m(r) phi_n*(r) ]
-
-    see JCP 108, 4697 (1998) for more details.
-
-    :param basis: plane wave basis information
-    :param occupied_orbitals: a list of occupied orbitals
-    :param N: the number of electrons
-    :param N: the MO transformation matrix
-
-    :return exchange_energy: the exact Hartree-Fock exchange energy
-    :return exchange_potential: the exact Hartree-Fock exchange potential
-
-    """
-
-    # accumulate exchange energy and matrix
-    exchange_energy = 0.0
-
-    for i in range(0, N):
-        for j in range(0, N):
-
-            # Cij(r') = phi_i(r') phi_j*(r')
-            # Cij(g) = FFT[Cij(r')]
-            tmp = np.fft.ifftn(occupied_orbitals[j].conj() * occupied_orbitals[i])
-            Cij = tmp.ravel()[basis.flat_idx]
-
-            # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-            Kij = Cij * basis.inv_g2
-
-            exchange_energy += np.sum( Cij.conj() * Kij )
-
-    # build exchange matrix in planewave basis
-    exchange_matrix = np.zeros((basis.n_plane_waves_per_k[0], basis.n_plane_waves_per_k[0]), dtype='complex128')
-
-    Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-
-    for i in range(0, basis.n_plane_waves_per_k[0]):
-        ii = basis.kg_to_g[0][i]
-
-        # Ki(r) = sum_j Kij(r) phi_j(r)
-        Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-
-        # a planewave basis function
-        phi_i = np.zeros(len(basis.g), dtype = 'complex128')
-        phi_i[ii] = 1.0
-        tmp = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        #for myg in range( len(basis.g) ):
-        #    tmp[ get_miller_indices(myg, basis) ] = phi_i[myg]
-        tmp.ravel()[basis.flat_idx] = phi_i
-        phi_i = np.fft.fftn(tmp)
-
-        for j in range(0, N):
-
-            # Cij(r') = phi_i(r') phi_j*(r')
-            # Cij(g) = FFT[Cij(r')]
-            tmp = np.fft.ifftn(occupied_orbitals[j].conj() * phi_i)
-            Cij = tmp.ravel()[basis.flat_idx]
-
-            # Kij(g) = Cij(g) * FFT[1/|r-r'|]
-            Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
-
-            # Kij(r) = FFT^-1[Kij(g)]
-            Kij_r = np.fft.fftn(Kij_G)
-
-            # action of K on an occupied orbital, i: 
-            # Ki(r) = sum_j Kij(r) phi_j(r)
-            Ki_r += Kij_r * occupied_orbitals[j]
-
-        # build a row of the exchange matrix: < G' | K | G''> = FFT( Ki_r )
-        row_g = np.fft.ifftn(Ki_r)
-        for k in range(0, basis.n_plane_waves_per_k[0]):
-            kk = basis.kg_to_g[0][k]
-            
-            exchange_matrix[k, i] = row_g[ get_miller_indices(kk, basis) ] 
-
-    return -2.0 * np.pi / basis.omega * exchange_energy, -4.0 * np.pi / basis.omega * exchange_matrix
-
 def get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional):
     """
 
@@ -338,11 +252,6 @@ def get_xc_potential(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c
             v_xc_alpha[myg] = tmp_alpha[ get_miller_indices(myg, basis) ]
             v_xc_beta[myg] = tmp_beta[ get_miller_indices(myg, basis) ]
 
-    else :
-
-        # TODO: fix for general k
-        xc_energy = get_exact_exchange_energy(basis, occupied_orbitals, N, C)
-
     return v_xc_alpha, v_xc_beta
 
 def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional): 
@@ -429,6 +338,7 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_fu
 
     return xc_energy
 
+# TODO: we won't need this function once storage of non-local pseudopotential matrix is eliminated
 def get_matrix_elements(basis, kid, vg):
 
     """
@@ -487,42 +397,6 @@ def get_nuclear_electronic_potential(cell, basis, valence_charges = None):
 
     return vneG
 
-def form_orbital_gradient(basis, C, N, F, kid):
-    """
-
-    form density matrix and orbital gradient from fock matrix and orbital coefficients
-
-    :param basis: plane wave basis information
-    :param C: molecular orbital coefficients
-    :param N: the number of electrons
-    :param F: the fock matrix
-    :param kid: index for a given k-point
-
-    :return orbital_gradient: the orbital gradient
-
-    """
-
-    tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'complex128')
-    for pp in range(N):
-        tmporbs[:, pp] = C[:, pp]
-
-    #D = np.einsum('ik,jk->ij', tmporbs.conj(), tmporbs)
-    D = np.matmul(tmporbs, tmporbs.conj().T) 
-
-    # only upper triangle of F is populated ... symmetrize and rescale diagonal
-    #F = F + F.conj().T
-    #diag = np.diag(F)
-    #np.fill_diagonal(F, 0.5 * diag)
-    #for pp in range(basis.n_plane_waves_per_k[kid]):
-    #    F[pp][pp] *= 0.5
-
-    #orbital_gradient = np.einsum('ik,kj->ij', F, D)
-    #orbital_gradient -= np.einsum('ik,kj->ij', D, F)
-    orbital_gradient = np.matmul(F, D)
-    orbital_gradient -= np.matmul(D, F)
-
-    return orbital_gradient
-
 def get_density(basis, C, Ne, Nmo, kid):
     """
 
@@ -557,42 +431,6 @@ def get_density(basis, C, Ne, Nmo, kid):
             rho += np.absolute(occ)**2.0 / basis.omega
 
     return ( 1.0 / len(basis.kpts) ) * rho, orbitals_r
-
-def form_fock_matrix(basis, kid, v = None): 
-    """
-
-    form fock matrix
-
-    :param basis: plane wave basis information
-    :param kid: index for a given k-point
-    :param v: the potential ( coulomb + xc + electron-nucleus / local pp )
-
-    :return fock: the fock matrix
-
-    """
-
-    fock = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
-
-    # unpack potential
-    if v is not None:
-        fock += get_matrix_elements(basis, kid, v)
-    
-    # get non-local part of the pseudopotential (not jellium)
-    if basis.use_pseudopotential and not jellium:
-        fock += get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-
-    # get kinetic energy
-    kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
-    T = np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0 
-    diagonals = T + fock.diagonal()
-    np.fill_diagonal(fock, diagonals)
-
-    # only upper triangle of fock is populated ... symmetrize and rescale diagonal
-    fock = fock + fock.conj().T
-    diag = np.diag(fock)
-    np.fill_diagonal(fock, 0.5 * diag)
-
-    return fock
 
 # TODO: eliminate npw x npw storage
 def get_nonlocal_pp_energy(basis, C, N, kid):
@@ -1052,8 +890,8 @@ def uks(cell, basis,
         epsilon_beta.append(np.zeros((nmo_beta), dtype='complex128'))
 
     # initialize occ_alpha and occ_beta arrays ... won't work for kpts > 0
-    rho_a, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
-    rho_b, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
+    rho_alpha, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
+    rho_beta, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
 
     # kinetic energy
     T = []
