@@ -48,7 +48,7 @@ def orthonormalize(C):
     # apply to orbitals
     return C @ S_inv_sqrt
 
-def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
+def get_exact_exchange_energy(basis, phi_r, N, C, occupation_numbers):
     """
 
     evaluate the exact Hartree-Fock exchange energy, according to
@@ -62,9 +62,10 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
     see JCP 108, 4697 (1998) for more details.
 
     :param basis: plane wave basis information
-    :param occupied_orbitals: a list of occupied orbitals
-    :param N: the number of electrons
-    :param N: the MO transformation matrix
+    :param phi_r: a list of occupied orbitals in real space
+    :param N: the number of orbitals (could be greater than number of electrons with the use of the occupation_numbers list)
+    :param C: the MO transformation matrix
+    :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
 
     :return exchange_energy: the exact Hartree-Fock exchange energy
 
@@ -78,7 +79,7 @@ def get_exact_exchange_energy(basis, occupied_orbitals, N, C):
 
             # Cij(r') = phi_i(r') phi_j*(r')
             # Cij(g) = FFT[Cij(r')]
-            tmp = np.fft.ifftn(occupied_orbitals[j].conj() * occupied_orbitals[i])
+            tmp = np.fft.ifftn(phi_r[j].conj() * phi_r[i]) * occupation_numbers[i] * occupation_numbers[j]
             Cij = tmp.ravel()[basis.flat_idx]
 
             # Kij(g) = Cij(g) * FFT[1/|r-r'|]
@@ -397,7 +398,7 @@ def get_nuclear_electronic_potential(cell, basis, valence_charges = None):
 
     return vneG
 
-def get_density(basis, C, Ne, Nmo, kid):
+def get_density(basis, C, Ne, Nmo, kid, occupation_numbers):
     """
 
     get real-space density from molecular orbital coefficients
@@ -407,30 +408,30 @@ def get_density(basis, C, Ne, Nmo, kid):
     :param Ne: the number of electrons
     :param Nmo: the number of molecular orbitals (Nmo >= Ne)
     :param kid: index for a given k-point
+    :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
 
     :return rho: the density
-    :return orbitals_r: the molecular orbitals in real space 
+    :return phi_r: the molecular orbitals in real space 
 
     """
 
-    orbitals_r = []
+    phi_r = []
     rho = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
     for pp in range(Nmo):
 
-        occ = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
+        phi = np.zeros(basis.real_space_grid_dim,dtype = 'complex128')
 
         for tt in range( basis.n_plane_waves_per_k[kid] ):
 
             ik = basis.kg_to_g[kid][tt]
-            occ[ get_miller_indices(ik, basis) ] = C[tt, pp]
+            phi[ get_miller_indices(ik, basis) ] = C[tt, pp]
 
-        occ = np.fft.fftn(occ) 
-        orbitals_r.append(occ)
+        phi = np.fft.fftn(phi) 
+        phi_r.append(phi)
 
-        if pp < Ne:
-            rho += np.absolute(occ)**2.0 / basis.omega
+        rho += np.absolute(phi)**2.0 / basis.omega * occupation_numbers[pp]**2
 
-    return ( 1.0 / len(basis.kpts) ) * rho, orbitals_r
+    return ( 1.0 / len(basis.kpts) ) * rho, phi_r
 
 # TODO: eliminate npw x npw storage
 def get_nonlocal_pp_energy(basis, C, N, kid):
@@ -465,7 +466,7 @@ def get_nonlocal_pp_energy(basis, C, N, kid):
 
     return nonlocal_pp_energy
 
-def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
+def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_numbers):
     """
     evaluate action of fock matrix on orbitals and build ace operator
 
@@ -473,12 +474,13 @@ def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
     :param kid: the current k-point
     :param ne: number of electrons
     :param nmo: number of bands (could be larger than ne)
-    :param occ: occupied orbitals, in real space
-    :param C: occupied orbitals, in reciprocal space
+    :param phi_r: orbitals, in real space
+    :param C: orbitals, in reciprocal space
     :param T: diagonal of the kinetic energy matrix, in reciprocal space
     :param v_r: the potential (coulomb + local pseudopotential + xc), in real space
     :param Vnl: matrix representation of non-local pseudopotential, in reciprocal space
     :param xc: the exchange-correlation functional
+    :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
 
 
     :return F_c: the action of the fock matrix on the orbials
@@ -495,11 +497,11 @@ def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
         # exchange
         Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
         if xc == 'hf':
-            for j in range(0, ne):
+            for j in range(0, nmo): # note, this has changed from ne to nmo with the introduction of occupation_numbers
 
                 # Cij(r') = phi_i(r') phi_j*(r')
                 # Cij(g) = FFT[Cij(r')]
-                tmp = np.fft.ifftn(occ[j].conj() * occ[i])
+                tmp = np.fft.ifftn(phi_r[j].conj() * phi_r[i])
                 Cij = tmp.ravel()[basis.flat_idx]
 
                 # Kij(g) = Cij(g) * FFT[1/|r-r'|]
@@ -510,12 +512,12 @@ def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
 
                 # action of K on an occupied orbital, i: 
                 # Ki(r) = sum_j Kij(r) phi_j(r)
-                Ki_r += Kij_r * occ[j]
+                Ki_r += Kij_r * phi_r[j] * occupation_numbers[j]
 
             Ki_r *= -4.0 * np.pi / basis.omega
 
         # action of potential on orbitals in real space, then transform to reciprocal space
-        tmp = v_r * occ[i] #+ Ki_r # real space, 3d
+        tmp = v_r * phi_r[i] #+ Ki_r # real space, 3d
         tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
         tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
 
@@ -535,7 +537,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, occ, C, T, v_r, Vnl, xc):
 
     return F_c, Ki, exchange
 
-def fock_on_orbitals_using_ace(basis, kid, ne, nmo, occ, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange):
+def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange, occupation_numbers):
     """
     apply fock operator to a set of orbitals using the ace operator
 
@@ -543,8 +545,8 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, occ, c, T, v_r, Vnl, xc, Ki,
     :param kid: the current k-point
     :param ne: number of electrons
     :param nmo: number of bands (could be larger than ne)
-    :param occ: occupied orbitals, in real space
-    :param C: occupied orbitals, in reciprocal space
+    :param phi_r: orbitals, in real space
+    :param C: orbitals, in reciprocal space
     :param T: diagonal of the kinetic energy matrix, in reciprocal space
     :param v_r: the potential (coulomb + local pseudopotential + xc), in real space
     :param Vnl: matrix representation of non-local pseudopotential, in reciprocal space
@@ -552,24 +554,26 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, occ, c, T, v_r, Vnl, xc, Ki,
     :param Ki: exchange operator acting on orbitals, i, in reciprocal space
     :param B: ACE B matrix
     :param ace_exchange: do use the ace operator for exchange?
+    :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
 
     :return F @ c: action of fock operator on the orbitals in reciprococal space
     """
 
     # orbital in real space
-    occ = np.zeros([np.prod(basis.real_space_grid_dim), c.shape[1]], dtype=np.complex128) # lobpcg
-    occ[basis.grid_idx_k[kid]] = c
-    occ = occ.reshape(basis.real_space_grid_dim)
-    occ = np.fft.fftn(occ) 
+    current_phi = np.zeros([np.prod(basis.real_space_grid_dim), c.shape[1]], dtype=np.complex128) # lobpcg
+    current_phi[basis.grid_idx_k[kid]] = c
+    current_phi = current_phi.reshape(basis.real_space_grid_dim)
+    current_phi = np.fft.fftn(current_phi) 
 
     # exchange
+    Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
     Ki_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
     if xc == 'hf' and not ace_exchange:
-        for j in range(0, ne):
+        for j in range(0, nmo): # note, this has changed from ne to nmo with the introduction of occupation_numbers
 
             # Cij(r') = phi_i(r') phi_j*(r')
             # Cij(g) = FFT[Cij(r')]
-            tmp = np.fft.ifftn(occ_list[j].conj() * occ)
+            tmp = np.fft.ifftn(phi_r[j].conj() * current_phi)
             Cij = tmp.ravel()[basis.flat_idx]
 
             # Kij(g) = Cij(g) * FFT[1/|r-r'|]
@@ -580,12 +584,12 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, occ, c, T, v_r, Vnl, xc, Ki,
 
             # action of K on an occupied orbital, i: 
             # Ki(r) = sum_j Kij(r) phi_j(r)
-            Ki_r += Kij_r * occ_list[j]
+            Ki_r += Kij_r * phi_r[j] * occupation_numbers[j]
 
         Ki_r *= -4.0 * np.pi / basis.omega
 
     # action of potential on orbitals in real space, then transform to reciprocal space
-    tmp = v_r * occ  # real space, 3d
+    tmp = v_r * current_phi  # real space, 3d
     tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
     tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
     tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
@@ -866,6 +870,12 @@ def uks(cell, basis,
     #if nbeta > nalpha:  
     #    nmo = nbeta
 
+    # occupation numbers
+    occ_num_alpha = np.ones(nmo_alpha, dtype=np.float64)
+    occ_num_beta = np.ones(nmo_beta, dtype=np.float64)
+    occ_num_alpha[nalpha:] = 0.0
+    occ_num_beta[nbeta:] = 0.0
+
     for kid in range ( len(basis.kpts) ):
 
         Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-8)
@@ -889,9 +899,9 @@ def uks(cell, basis,
         epsilon_alpha.append(np.zeros((nmo_alpha), dtype='complex128'))
         epsilon_beta.append(np.zeros((nmo_beta), dtype='complex128'))
 
-    # initialize occ_alpha and occ_beta arrays ... won't work for kpts > 0
-    rho_alpha, occ_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid)
-    rho_beta, occ_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid)
+    # initialize phi_alpha and phi_beta arrays ... won't work for kpts > 0
+    rho_alpha, phi_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid, occ_num_alpha)
+    rho_beta, phi_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid, occ_num_beta)
 
     # kinetic energy
     T = []
@@ -946,8 +956,8 @@ def uks(cell, basis,
             if jellium:
                 Vnl *= 0.0
 
-            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, occ_alpha, Calpha, T, v_alpha_r, Vnl, xc)
-            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, occ_beta, Cbeta, T, v_beta_r, Vnl, xc)
+            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, Vnl, xc, occ_num_alpha)
+            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, Vnl, xc, occ_num_beta)
 
             if xc == 'hf':
 
@@ -999,7 +1009,6 @@ def uks(cell, basis,
         rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
         # diagonalize fock matrix with extrapolated potential
-        Kij_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
 
         for kid in range ( len(basis.kpts) ):
 
@@ -1013,18 +1022,18 @@ def uks(cell, basis,
                 Vnl *= 0.0
 
             def lobpcg_alpha(c):
-                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, occ_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange)
+                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha)
 
             def lobpcg_beta(c):
-                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, occ_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange)
+                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta)
 
             if not jellium:
 
                 Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
                 Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
 
-                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
-                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=2000, tol=d_convergence*0.1)
+                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
+                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
 
             else :
                 #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
@@ -1059,8 +1068,8 @@ def uks(cell, basis,
                 Cbeta[kid] = Calpha[kid].copy()
 
             # update density
-            my_rho_alpha, occ_alpha = get_density(basis, Calpha[kid], nalpha, nmo_alpha, kid)
-            my_rho_beta, occ_beta = get_density(basis, Cbeta[kid], nbeta, nmo_beta, kid)
+            my_rho_alpha, phi_alpha = get_density(basis, Calpha[kid], nalpha, nmo_alpha, kid, occ_num_alpha)
+            my_rho_beta, phi_beta = get_density(basis, Cbeta[kid], nbeta, nmo_beta, kid, occ_num_beta)
 
             # density should be non-negative ...
             rho_alpha += my_rho_alpha.clip(min = 0)
@@ -1099,9 +1108,9 @@ def uks(cell, basis,
         else :
 
             # exact exchange energy
-            xc_energy = get_exact_exchange_energy(basis, occ_alpha, nalpha, Calpha)
+            xc_energy = get_exact_exchange_energy(basis, phi_alpha, nalpha, Calpha, occ_num_alpha)
             if nbeta > 0:
-                my_xc_energy = get_exact_exchange_energy(basis, occ_beta, nbeta, Cbeta)
+                my_xc_energy = get_exact_exchange_energy(basis, phi_beta, nbeta, Cbeta, occ_num_beta)
                 xc_energy += my_xc_energy
 
             # jellium
