@@ -429,20 +429,21 @@ def get_density(basis, C, Ne, Nmo, kid, occupation_numbers):
         phi = np.fft.fftn(phi) 
         phi_r.append(phi)
 
-        rho += np.absolute(phi)**2.0 / basis.omega * occupation_numbers[pp]**2
+        rho += np.absolute(phi)**2.0 / basis.omega * occupation_numbers[pp]
 
     return ( 1.0 / len(basis.kpts) ) * rho, phi_r
 
 # TODO: eliminate npw x npw storage
-def get_nonlocal_pp_energy(basis, C, N, kid):
+def get_nonlocal_pp_energy(basis, C, N, kid, occupation_numbers):
     """
 
     get nonlocal pseudopotential part of the energy
 
     :param basis: plane wave basis information
     :param C: molecular orbital coefficients
-    :param N: the number of electrons
+    :param N: the number of orbitals (formerly number of electrons, prior to smearing)
     :param kid: index for a given k-point
+    :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
 
     :return one_electron_energy: the nonlocal pseudopotential part of the energy
 
@@ -458,11 +459,12 @@ def get_nonlocal_pp_energy(basis, C, N, kid):
     diag = np.diag(oei)
     np.fill_diagonal(oei, 0.5 * diag)
 
-    tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'complex128')
-    for pp in range(N):
-        tmporbs[:, pp] = C[:, pp]
+    #tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'complex128')
+    #for pp in range(N):
+    #    tmporbs[:, pp] = C[:, pp] * np.sqrt(occupation_numbers[pp])
+    #nonlocal_pp_energy = np.einsum('pi,pq,qi->',tmporbs.conj(), oei, tmporbs) / len(basis.kpts)
 
-    nonlocal_pp_energy = np.einsum('pi,pq,qi->',tmporbs.conj(), oei, tmporbs) / len(basis.kpts)
+    nonlocal_pp_energy = np.einsum('pi,pq,qi->',C.conj(), oei, C * occupation_numbers) / len(basis.kpts)
 
     return nonlocal_pp_energy
 
@@ -690,8 +692,8 @@ def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_funct
     v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
 
     # jellium ... but only true in the thermodynamic limit
-    if jellium:
-        v_coulomb *= 0.0
+    #if jellium:
+    #    v_coulomb *= 0.0
 
     # alpha- and beta-spin local potentials
     v_alpha = v_coulomb.copy()
@@ -718,6 +720,61 @@ def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_funct
 
     return v_coulomb, v_alpha_r, v_beta_r
 
+def fermi_dirac(ne, eps, mu, kBT = None):
+    """
+    occupations from fermi–dirac distribution for given chemical potential
+
+    :param ne: number of electrons
+    :param eps: orbital energies
+    :param mu: chemical potential
+    :param kBT: boltzman factor times temperature
+
+    :return fermi-diract distribution
+    """
+    if kBT == None:
+        ret = np.zeros_like(eps).real
+        ret[:ne] = 1.0
+        return ret
+
+    x = (eps - mu) / kBT
+    return 1.0 / (np.exp(x) + 1.0)
+
+def find_chemical_potential(ne, eps, kBT = None, tol=1e-10, maxit = 200):
+    """
+    bisection search for chemical potential, mu, for fermi-dirac distribution:
+
+    sum_i f_i = ne
+
+    :param ne: number of electrons
+    :param eps: orbital energies
+    :param kBT: boltzman factor times temperature
+    :param tol: convergence threshold for bisection search
+    :param maxit: maximum number of iterations
+
+    """
+
+    if kBT == None:
+        return kBT
+
+    # bracket mu between min and max eigenvalue
+    mu_lo = np.min(eps) - 10.0 * kBT
+    mu_hi = np.max(eps) + 10.0 * kBT
+
+    # bisection search
+    for it in range(maxit):
+        mu_mid = 0.5 * (mu_lo + mu_hi)
+        n_mid = np.sum(fermi_dirac(ne, eps, mu_mid, kBT = kBT))
+        if n_mid > ne:
+            mu_hi = mu_mid
+        else:
+            mu_lo = mu_mid
+        if abs(mu_hi - mu_lo) < tol:
+            break
+    if it == maxit:
+        raise Exception('bisection search for the chemical potential failed.')
+
+    return mu_mid
+
 def uks(cell, basis, 
         xc = 'lda', 
         guess_mix = False, 
@@ -729,7 +786,8 @@ def uks(cell, basis,
         ace_exchange = True,
         jellium = False,
         jellium_ne = 2,
-        maxiter=500):
+        maxiter=500,
+        kBT=None):
 
     """
 
@@ -747,9 +805,10 @@ def uks(cell, basis,
     :return total energy
     :return Calpha: alpha MO coefficients
     :return Cbeta: beta MO coefficients
+    :return kBT: boltzman factor times temperature (for smearing)
 
     """
- 
+
     print('')
     print('    ************************************************')
     print('    *                                              *')
@@ -757,6 +816,12 @@ def uks(cell, basis,
     print('    *                                              *')
     print('    ************************************************')
     print('')
+
+    if len(basis.kpts) > 1 and kBT is not None:
+        raise Exception("smearing only works for the gamma point for now")
+
+    if len(basis.kpts) > 1 and xc == 'hf':
+        raise Exception("exact exchange only works for the gamma point for now")
 
     if xc != 'lda' and xc != 'pbe' and xc != 'hf' :
         raise Exception("uks only supports xc = 'lda' and 'hf' for now")
@@ -811,10 +876,21 @@ def uks(cell, basis,
     # diis 
     diis_start_cycle = damping_iterations
 
+    # nmo ... number of desired molecular orbitals ... must be at least ne
+    nmo_alpha = nalpha  #+ 1
+    nmo_beta = nbeta #+ 1
+    
+    # increase nmo if we're doing smearing
+    if kBT is not None:
+        nmo_alpha *= 2
+        nmo_beta *= 2
+
     print("")
     if jellium:
         rs = (3 * basis.omega / ( 4.0 * np.pi * (nalpha + nbeta)))**(1.0/3.0)
         print('    Wigner-Seitz radius (rs)                     %20.12f' % (rs))
+    if kBT is not None:
+        print('    kBT for smearing (eV)                        %20.12f' % (kBT * 27.21138602))
     print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
     print('    correlation functional:                      %20s' % ( functional_name_dict[xc][1] ) )
     print('    e_convergence:                               %20.2e' % ( e_convergence ) )
@@ -824,8 +900,10 @@ def uks(cell, basis,
     print('    no. basis functions (orbitals, gamma point): %20i' % ( basis.n_plane_waves_per_k[0] ) )
     print('    no. basis functions (density):               %20i' % ( len(basis.g) ) )
     print('    total_charge:                                %20i' % ( total_charge ) )
-    print('    no. alpha bands:                             %20i' % ( nalpha ) )
-    print('    no. beta bands:                              %20i' % ( nbeta ) )
+    print('    no. alpha occupied bands:                    %20i' % ( nalpha ) )
+    print('    no. beta occupied bands:                     %20i' % ( nbeta ) )
+    print('    no. total alpha bands:                       %20i' % ( nmo_alpha ) )
+    print('    no. total beta bands:                        %20i' % ( nmo_beta ) )
     print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
     print('    damp density:                                %20s' % ( "yes" if damp_density is True else "no" ) )
     print('    no. damping iterations:                      %20i' % ( damping_iterations ) )
@@ -863,18 +941,17 @@ def uks(cell, basis,
     Ki_alpha = []
     Ki_beta = []
 
-    # nmo ... number of desired molecular orbitals ... must be at least ne
-    # warning: ace has trouble for nmo > ne with eigsh, but lobpcg seems to work
-    nmo_alpha = nalpha #+ 1
-    nmo_beta = nbeta #+ 1
-    #if nbeta > nalpha:  
-    #    nmo = nbeta
-
     # occupation numbers
     occ_num_alpha = np.ones(nmo_alpha, dtype=np.float64)
     occ_num_beta = np.ones(nmo_beta, dtype=np.float64)
     occ_num_alpha[nalpha:] = 0.0
     occ_num_beta[nbeta:] = 0.0
+
+    # kinetic energy
+    T = []
+    for kid in range ( len(basis.kpts) ):
+        kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
+        T.append(np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0)
 
     for kid in range ( len(basis.kpts) ):
 
@@ -888,7 +965,6 @@ def uks(cell, basis,
             Cbeta[kid][i, i] = 1.0
         Calpha[kid] = orthonormalize(Calpha[kid])
         Cbeta[kid] = orthonormalize(Cbeta[kid])
-        #Cbeta[kid] = Calpha[kid].copy()
 
         B_alpha_ace.append(np.zeros((nmo_alpha, nmo_alpha), dtype='complex128'))
         B_beta_ace.append(np.zeros((nmo_beta, nmo_beta), dtype='complex128'))
@@ -899,15 +975,19 @@ def uks(cell, basis,
         epsilon_alpha.append(np.zeros((nmo_alpha), dtype='complex128'))
         epsilon_beta.append(np.zeros((nmo_beta), dtype='complex128'))
 
+        # jellium orbital guess, plus some noise
+        if jellium:
+            eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
+            epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
+            Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-4
+            Calpha[kid] = orthonormalize(Calpha[kid])
+            Cbeta[kid] = Calpha[kid].copy()
+            #one_electron_energy = np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nalpha])**2, T[kid]))
+            #one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nbeta])**2, T[kid]))
+
     # initialize phi_alpha and phi_beta arrays ... won't work for kpts > 0
     rho_alpha, phi_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid, occ_num_alpha)
     rho_beta, phi_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid, occ_num_beta)
-
-    # kinetic energy
-    T = []
-    for kid in range ( len(basis.kpts) ):
-        kgtmp = basis.kpts[kid] + basis.g[basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]]
-        T.append(np.einsum('ij,ij->i', kgtmp, kgtmp) / 2.0)
 
     # jellium guess
     rho_alpha = nalpha / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
@@ -1027,27 +1107,48 @@ def uks(cell, basis,
             def lobpcg_beta(c):
                 return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta)
 
+            Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
+            Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
+
+            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*1e-1)
             if not jellium:
+                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*1e-1)
+            else:
+                Cbeta[kid] = Calpha[kid].copy()
+                epsilon_beta[kid] = epsilon_alpha[kid].copy()
 
-                Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
-                Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
+            # HF orbitals need to be shifted for smearing to work correctly
+            if xc == 'hf':
+                epsilon_alpha[kid] -= madelung * occ_num_alpha
+                epsilon_beta[kid] -= madelung * occ_num_beta
+                #epsilon_alpha[kid][:nalpha] -= madelung
+                #epsilon_beta[kid][:nbeta] -= madelung
+                #print(epsilon_alpha[kid])
+                #print(epsilon_beta[kid])
 
-                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
-                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
+            #if not jellium:
 
-            else :
-                #epsilon_alpha[kid], Calpha[kid] = scipy.linalg.eigh(np.diag(T[kid]), eigvals=(0, nalpha))
-                #epsilon_beta[kid], Cbeta[kid] = scipy.linalg.eigh(fock_b[kid], eigvals=(0, nbeta))
+            #    Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
+            #    Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
 
-                eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
-                epsilon_alpha[kid], Calpha[kid] = eps_a[:nalpha], ca[:, :nalpha]
+            #    epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
+            #    epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
 
-                #lowest_energy_T_index = np.argsort(T[kid])[:nalpha]
-                ##test = T[kid][lowest_energy_T_index]
-                #epsilon_alpha[kid] = T[kid][lowest_energy_T_index]
-                #Calpha[kid] = np.zeros((len(T[kid]), nalpha), dtype=np.complex128)
-                #for orb_idx, pw_idx in enumerate(lowest_energy_T_index):
-                #    Calpha[kid][pw_idx, orb_idx] = 1.
+            #else :
+
+            #    eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
+            #    epsilon_alpha[kid], Calpha[kid] = eps_a[:nalpha], ca[:, :nalpha]
+
+            # update occupation numbers for smearing
+            mu_alpha = find_chemical_potential(nalpha, epsilon_alpha[kid], kBT = kBT)
+            mu_beta = find_chemical_potential(nbeta, epsilon_beta[kid], kBT = kBT)
+            #print('optimized mu (alpha)', mu_alpha)
+            #print('optimized mu (beta)', mu_beta)
+
+            occ_num_alpha = fermi_dirac(nalpha, epsilon_alpha[kid], mu_alpha, kBT = kBT)
+            occ_num_beta = fermi_dirac(nbeta, epsilon_beta[kid], mu_beta, kBT = kBT)
+            #print(occ_num_alpha)
+            #print(occ_num_beta)
 
             # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
             #if guess_mix is True and scf_iter == 0:
@@ -1076,13 +1177,13 @@ def uks(cell, basis,
             rho_beta += my_rho_beta.clip(min = 0)
 
             # kinetic energy part of the one-electron energy
-            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nalpha])**2, T[kid]))
-            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nbeta])**2, T[kid]))
+            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nmo_alpha])**2 * occ_num_alpha, T[kid]))
+            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nmo_beta])**2 * occ_num_beta, T[kid]))
 
             # nonlocal pseudopotential part of the energy
             if not jellium:
-                one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nalpha, kid)
-                one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nbeta, kid)
+                one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nmo_alpha, kid, occ_num_alpha)
+                one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nmo_beta, kid, occ_num_beta)
 
         # nuclear potential / local pseudopotential part of the one-electron energy
         if not jellium:
@@ -1108,9 +1209,9 @@ def uks(cell, basis,
         else :
 
             # exact exchange energy
-            xc_energy = get_exact_exchange_energy(basis, phi_alpha, nalpha, Calpha, occ_num_alpha)
+            xc_energy = get_exact_exchange_energy(basis, phi_alpha, nmo_alpha, Calpha, occ_num_alpha)
             if nbeta > 0:
-                my_xc_energy = get_exact_exchange_energy(basis, phi_beta, nbeta, Cbeta, occ_num_beta)
+                my_xc_energy = get_exact_exchange_energy(basis, phi_beta, nmo_beta, Cbeta, occ_num_beta)
                 xc_energy += my_xc_energy
 
             # jellium
