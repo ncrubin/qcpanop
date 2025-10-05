@@ -468,7 +468,7 @@ def get_nonlocal_pp_energy(basis, C, N, kid, occupation_numbers):
 
     return nonlocal_pp_energy
 
-def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_numbers):
+def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_numbers, adiabatic_exchange_lambda):
     """
     evaluate action of fock matrix on orbitals and build ace operator
 
@@ -483,6 +483,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_
     :param Vnl: matrix representation of non-local pseudopotential, in reciprocal space
     :param xc: the exchange-correlation functional
     :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
+    :param adiabatic_exchange_lambda: a scaling factor on the interval [0, 1] for ramping up exchange
 
 
     :return F_c: the action of the fock matrix on the orbials
@@ -537,7 +538,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_
         tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
         exchange[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
 
-    return F_c, Ki, exchange
+    return F_c, Ki, exchange * adiabatic_exchange_lambda
 
 def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange, occupation_numbers, adiabatic_exchange_lambda):
     """
@@ -626,7 +627,7 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
 
     return F_c
 
-def build_B_ace(ne, nmo, C, Ki, exchange):
+def build_B_ace(ne, nmo, C, Ki, exchange, adiabatic_exchange_lambda):
     """
     build B matrix for ACE
     see text after Eq. 13 of J. Chem. Theory Comput. 12, 2242-2249 (2016).
@@ -636,6 +637,7 @@ def build_B_ace(ne, nmo, C, Ki, exchange):
     :param C: orbital coefficients in reciprocal space
     :param Ki: action of exchange operator on orbitals in reciprocal space
     :param exchange: exchange contribution to fock matrix (exact, for testing ace)
+    :param adiabatic_exchange_lambda: a scaling factor on the interval [0, 1] for ramping up exchange
 
     :return B_ace: the B matrix for ACE
     """
@@ -660,7 +662,7 @@ def build_B_ace(ne, nmo, C, Ki, exchange):
     # sum_j B_{ij} < phi_j | K | c > 
     tmp = B_ace @ tmp 
     # sum_i K | phi_i >  B_{ij} < phi_j | K | c >
-    ace = Ki @ tmp 
+    ace = Ki @ tmp * adiabatic_exchange_lambda
 
     assert (np.allclose(ace, exchange))
 
@@ -1031,7 +1033,7 @@ def uks(cell, basis,
         if jellium:
             eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
             epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
-            Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-4
+            Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-6
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = Calpha[kid].copy()
             #one_electron_energy = np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nalpha])**2, T[kid]))
@@ -1084,16 +1086,16 @@ def uks(cell, basis,
             if jellium:
                 Vnl *= 0.0
 
-            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, Vnl, xc, occ_num_alpha)
-            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, Vnl, xc, occ_num_beta)
+            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, Vnl, xc, occ_num_alpha, adiabatic_exchange_lambda)
+            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, Vnl, xc, occ_num_beta, adiabatic_exchange_lambda)
 
             if xc == 'hf':
 
-                B_alpha_ace[kid] = build_B_ace(nalpha, nmo_alpha, Calpha[kid], Ki_alpha[kid], exchange_alpha)
-                B_beta_ace[kid] = build_B_ace(nbeta, nmo_beta, Cbeta[kid], Ki_beta[kid], exchange_beta)
+                B_alpha_ace[kid] = build_B_ace(nalpha, nmo_alpha, Calpha[kid], Ki_alpha[kid], exchange_alpha, adiabatic_exchange_lambda)
+                B_beta_ace[kid] = build_B_ace(nbeta, nmo_beta, Cbeta[kid], Ki_beta[kid], exchange_beta, adiabatic_exchange_lambda)
 
-                Fa_c += exchange_alpha * adiabatic_exchange_lambda
-                Fb_c += exchange_beta * adiabatic_exchange_lambda
+                Fa_c += exchange_alpha
+                Fb_c += exchange_beta
             
             Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
             Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
@@ -1287,10 +1289,10 @@ def uks(cell, basis,
         else :
             print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
 
-        #if scf_iter < 1000:
-        #    adiabatic_exchange_lambda += 0.001
+       # if scf_iter < 9:
+       #     adiabatic_exchange_lambda += 0.1
 
-        if conv < d_convergence and energy_diff < e_convergence: # and scf_iter >= 1000:
+        if conv < d_convergence and energy_diff < e_convergence: # and scf_iter >= 10:
             break
 
     if scf_iter == maxiter - 1:
