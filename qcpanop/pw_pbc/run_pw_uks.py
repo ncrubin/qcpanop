@@ -3,7 +3,6 @@ from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_e
 from qcpanop.pw_pbc.basis import plane_wave_basis 
 from qcpanop.pw_pbc.scf import uks
 
-from pyscf import dft, scf, pbc
 from pyscf.pbc import gto, scf
 
 import ase
@@ -27,10 +26,10 @@ def main():
     cell = gto.M(a = a,
                  atom = atom,
                  unit = 'bohr',
-                 basis = 'sto-3g', #'cc-pvdz',
+                 basis = 'cc-pvdz',
                  pseudo = 'gth-pbe',
                  #verbose = 100,
-                 ke_cutoff = 10 / 27.21138602,
+                 ke_cutoff = 1000 / 27.21138602,
                  precision = 1.0e-8,
                  charge = 0,
                  spin = 0,
@@ -38,8 +37,6 @@ def main():
 
     cell.build()
 
-    #cutoff = 3.22
-    #cutoff = 12.917
     cutoff = 1000
 
     # get plane wave basis information
@@ -47,8 +44,9 @@ def main():
         ke_cutoff = cutoff / 27.21138602, 
         n_kpts = [1, 1, 1])
 
-    # run plane wave scf 
-    en, ca, cb = uks(cell, basis, xc = 'hf', guess_mix = False, maxiter = 100, ace_exchange = True)
+    # run plane wave scf
+    kBT = None #1.5 / 27.21138602 
+    en, ca, cb = uks(cell, basis, xc = 'hf', guess_mix = True, maxiter = 100, ace_exchange = True, kBT = kBT)
 
     # C / diamond / pbe / gth-pbe / 1000 ev cutoff
     #assert np.isclose(en, -10.281221451484)
@@ -65,6 +63,8 @@ def main():
     # C / diamond / hf / gth-pbe / 3000 ev cutoff
     #assert np.isclose(en, -10.25032156584)
 
+    # C / diamond / hf / gth-pbe / 4000 ev cutoff
+    #assert np.isclose(en, -10.25032908497)
 
 if __name__ == "__main__":
     main()

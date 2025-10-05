@@ -539,7 +539,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_
 
     return F_c, Ki, exchange
 
-def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange, occupation_numbers):
+def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange, occupation_numbers, adiabatic_exchange_lambda):
     """
     apply fock operator to a set of orbitals using the ace operator
 
@@ -557,6 +557,7 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
     :param B: ACE B matrix
     :param ace_exchange: do use the ace operator for exchange?
     :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
+    :param adiabatic_exchange_lambda: a scaling factor on the interval [0, 1] for ramping up exchange
 
     :return F @ c: action of fock operator on the orbitals in reciprococal space
     """
@@ -610,7 +611,7 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
             # sum_i K | phi_i >  B_{ij} < phi_j | K | c >
             ace = Ki @ tmp 
 
-            F_c += ace
+            F_c += ace * adiabatic_exchange_lambda
  
         else :
 
@@ -619,7 +620,7 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
             tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
             tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
             tmp = tmp.reshape(c.shape) # for lobpcg
-            F_c += tmp
+            F_c += tmp * adiabatic_exchange_lambda
 
     #print(np.linalg.norm(ace - tmp))
 
@@ -718,6 +719,10 @@ def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_funct
     v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
     v_beta_r = np.fft.fftn(v_beta_r).real
 
+    #if jellium:
+    #    v_alpha_r -= v_alpha_r.mean()
+    #    v_beta_r -= v_beta_r.mean()
+
     return v_coulomb, v_alpha_r, v_beta_r
 
 def fermi_dirac(ne, eps, mu, kBT = None):
@@ -775,19 +780,74 @@ def find_chemical_potential(ne, eps, kBT = None, tol=1e-10, maxit = 200):
 
     return mu_mid
 
+def kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, ne, q0 = None, alpha = 0.05):
+    """
+    kerker preconditioning
+    
+    :param rho_alpha: current alpha-spin density 
+    :param rho_beta: current beta-spin density
+    :param rho_alpha_old: previous alpha-spin density 
+    :param rho_beta_old: previous beta-spin density
+    :param basis: the plane-wave basis object
+    :param ne: number of electrons
+    :param q0: screening length. if None, chosen to be the Fermi wavevector for jellium
+    :param alpha: mixing parameter. default should be good for metallic systems
+    """
+
+    # 1. densities in reciprocal space
+    tmp = np.fft.ifftn(rho_alpha)
+    rho_alpha_G_new = tmp.ravel()[basis.flat_idx]
+
+    tmp = np.fft.ifftn(rho_alpha_old)
+    rho_alpha_G_old = tmp.ravel()[basis.flat_idx]
+
+    tmp = np.fft.ifftn(rho_beta)
+    rho_beta_G_new = tmp.ravel()[basis.flat_idx]
+
+    tmp = np.fft.ifftn(rho_beta_old)
+    rho_beta_G_old = tmp.ravel()[basis.flat_idx]
+
+    # 2. residual in reciprocal space
+    res_alpha_G = rho_alpha_G_new - rho_alpha_G_old
+    res_beta_G = rho_beta_G_new - rho_beta_G_old
+
+    # 3. preconditioner
+    if q0 is None:
+        q0 = np.sqrt(4.0/np.pi) * (3.0 * np.pi**2 * ne / basis.omega)**(1.0/6.0) # for jellium
+    P = basis.g2 / (basis.g2 + q0**2)
+    P[0] = 0.0
+
+    res_alpha_G_pre = res_alpha_G * P
+    res_beta_G_pre = res_beta_G * P
+
+    # 4. new density in reciprocal space
+    rho_alpha_G_new = rho_alpha_G_old + alpha * res_alpha_G_pre
+    rho_beta_G_new = rho_beta_G_old + alpha * res_beta_G_pre
+
+    # 5. new density in real space wtf
+    tmp.ravel()[basis.flat_idx] = rho_alpha_G_new
+    rho_alpha = np.fft.fftn(tmp).real
+    rho_alpha.clip(min = 0)
+
+    tmp.ravel()[basis.flat_idx] = rho_beta_G_new
+    rho_beta = np.fft.fftn(tmp).real
+    rho_beta.clip(min = 0)
+
+    return rho_alpha, rho_beta
+
 def uks(cell, basis, 
         xc = 'lda', 
         guess_mix = False, 
         e_convergence = 1e-8, 
         d_convergence = 1e-6, 
         diis_dimension = 8, 
-        damp_density = True, 
-        damping_iterations = 8,
         ace_exchange = True,
         jellium = False,
         jellium_ne = 2,
         maxiter=500,
-        kBT=None):
+        kBT=None,
+        kerker_q0=None,
+        kerker_alpha=0.05):
 
     """
 
@@ -799,13 +859,13 @@ def uks(cell, basis,
     :param guess_mix: do mix alpha homo and lumo to break spin symmetry?
     :param e_convergence: the convergence in the energy
     :param d_convergence: the convergence in the orbital gradient
-    :param damp_density: do dampen density?
-    :param damping_iterations: for how many iterations should we dampen the fock matrix
     :param maxiter: maximum number of scf iterations
     :return total energy
     :return Calpha: alpha MO coefficients
     :return Cbeta: beta MO coefficients
     :return kBT: boltzman factor times temperature (for smearing)
+    :param kerker_q0: screening length for kerker preconditioning. if None, chosen to be the Fermi wavevector for jellium
+    :param kerker_alpha: kerker mixing parameter. default should be good for metallic systems
 
     """
 
@@ -868,14 +928,6 @@ def uks(cell, basis,
         nbeta = jellium_ne // 2
         enuc = 0.0
 
-    # damp density (helps with convergence sometimes)
-    damping_factor = 1.0
-    if damp_density :
-        damping_factor = 0.8
-
-    # diis 
-    diis_start_cycle = damping_iterations
-
     # nmo ... number of desired molecular orbitals ... must be at least ne
     nmo_alpha = nalpha  #+ 1
     nmo_beta = nbeta #+ 1
@@ -905,10 +957,10 @@ def uks(cell, basis,
     print('    no. total alpha bands:                       %20i' % ( nmo_alpha ) )
     print('    no. total beta bands:                        %20i' % ( nmo_beta ) )
     print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
-    print('    damp density:                                %20s' % ( "yes" if damp_density is True else "no" ) )
-    print('    no. damping iterations:                      %20i' % ( damping_iterations ) )
-    #print('    diis start iteration:                        %20i' % ( diis_start_cycle ) )
     print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
+    if kerker_q0 is not None:
+        print('    kerker screening length                      %20.2f' % ( kerker_q0) )
+    print('    kerker mixing parameter                      %20.2f' % ( kerker_alpha) )
 
     if guess_mix :
         print("")
@@ -955,10 +1007,10 @@ def uks(cell, basis,
 
     for kid in range ( len(basis.kpts) ):
 
-        Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-8)
-        Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-8)
-        #Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128'))
-        #Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128'))
+        #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-8)
+        #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-8)
+        Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128'))
+        Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128'))
         for i in range (nmo_alpha):
             Calpha[kid][i, i] = 1.0
         for i in range (nmo_beta):
@@ -1009,6 +1061,7 @@ def uks(cell, basis,
     one_electron_energy = 0.0
     coulomb_energy = 0.0
 
+    adiabatic_exchange_lambda = 1.0
     for scf_iter in range(maxiter):
 
         one_electron_energy = 0.0
@@ -1016,11 +1069,6 @@ def uks(cell, basis,
 
         # compute local potentials
         v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
-
-        # damping factor
-        damp = 1.0
-        if scf_iter < diis_start_cycle and damp_density : 
-            damp = damping_factor
 
         # evaluate the orbital gradient
         error_vector = np.zeros(0)
@@ -1044,8 +1092,8 @@ def uks(cell, basis,
                 B_alpha_ace[kid] = build_B_ace(nalpha, nmo_alpha, Calpha[kid], Ki_alpha[kid], exchange_alpha)
                 B_beta_ace[kid] = build_B_ace(nbeta, nmo_beta, Cbeta[kid], Ki_beta[kid], exchange_beta)
 
-                Fa_c += exchange_alpha
-                Fb_c += exchange_beta
+                Fa_c += exchange_alpha * adiabatic_exchange_lambda
+                Fb_c += exchange_beta * adiabatic_exchange_lambda
             
             Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
             Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
@@ -1063,12 +1111,8 @@ def uks(cell, basis,
         # norm of the orbital gradient for convergence check
         conv = np.linalg.norm(error_vector)
 
-        # damp or extrapolate density or potential
-        if scf_iter < diis_start_cycle:
-
-            # damping?
-            rho_alpha = (1.0-damp) * rho_alpha + damp * rho_alpha_old
-            rho_beta = (1.0-damp) * rho_beta + damp * rho_beta_old
+        # kerker preconditioning
+        rho_alpha, rho_beta = kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, nalpha + nbeta, q0 = kerker_q0, alpha = kerker_alpha)
 
         solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
         new_solution_vector = diis.update(solution_vector, error_vector)
@@ -1079,7 +1123,7 @@ def uks(cell, basis,
         rho_alpha.clip(min = 0)
         rho_beta.clip(min = 0)
 
-        # recompute potentials after damping / diis extrapolation
+        # recompute potentials after kerker preconditioning and diis extrapolation
         v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
 
         one_electron_energy = 0.0
@@ -1102,10 +1146,10 @@ def uks(cell, basis,
                 Vnl *= 0.0
 
             def lobpcg_alpha(c):
-                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha)
+                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha, adiabatic_exchange_lambda)
 
             def lobpcg_beta(c):
-                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta)
+                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta, adiabatic_exchange_lambda)
 
             Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
             Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
@@ -1139,6 +1183,11 @@ def uks(cell, basis,
             #    eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
             #    epsilon_alpha[kid], Calpha[kid] = eps_a[:nalpha], ca[:, :nalpha]
 
+            #eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
+            #epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
+            #print(epsilon_alpha[kid])
+            #exit()
+
             # update occupation numbers for smearing
             mu_alpha = find_chemical_potential(nalpha, epsilon_alpha[kid], kBT = kBT)
             mu_beta = find_chemical_potential(nbeta, epsilon_beta[kid], kBT = kBT)
@@ -1147,6 +1196,7 @@ def uks(cell, basis,
 
             occ_num_alpha = fermi_dirac(nalpha, epsilon_alpha[kid], mu_alpha, kBT = kBT)
             occ_num_beta = fermi_dirac(nbeta, epsilon_beta[kid], mu_beta, kBT = kBT)
+            #print(occ_num_alpha)
             #print(occ_num_alpha)
             #print(occ_num_beta)
 
@@ -1237,7 +1287,10 @@ def uks(cell, basis,
         else :
             print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
 
-        if conv < d_convergence and energy_diff < e_convergence :
+        #if scf_iter < 1000:
+        #    adiabatic_exchange_lambda += 0.001
+
+        if conv < d_convergence and energy_diff < e_convergence: # and scf_iter >= 1000:
             break
 
     if scf_iter == maxiter - 1:
