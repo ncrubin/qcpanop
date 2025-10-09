@@ -918,8 +918,8 @@ def uks(cell, basis,
     # madelung correction
     madelung = tools.pbc.madelung(cell, basis.kpts)
 
-    #nalpha, nbeta = cell.nelec
-    nbeta, nalpha = cell.nelec
+    nalpha, nbeta = cell.nelec
+    #nbeta, nalpha = cell.nelec
     total_charge = cell.charge
 
     # jellium
