@@ -508,6 +508,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_
                 Cij = tmp.ravel()[basis.flat_idx]
 
                 # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+                Kij_G[:] = 0.0
                 Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
 
                 # Kij(r) = FFT^-1[Kij(g)]
@@ -520,23 +521,23 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, Vnl, xc, occupation_
             Ki_r *= -4.0 * np.pi / basis.omega
 
         # action of potential on orbitals in real space, then transform to reciprocal space
-        tmp = v_r * phi_r[i] #+ Ki_r # real space, 3d
-        tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-        tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+        tmp_vphi = v_r * phi_r[i] #+ Ki_r # real space, 3d
+        tmp_vphi = np.fft.ifftn(tmp_vphi) # reciprocal space, 3d
+        tmp_vphi = tmp_vphi.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
 
-        F_c[:,i] = T[kid] * C[kid][:, i] + tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
+        F_c[:,i] = T[kid] * C[kid][:, i] + tmp_vphi[basis.kg_to_g[kid]] # map last term to small flattened basis
 
         # for ace
-        tmp = Ki_r # real space, 3d
-        tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-        tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-        Ki[:,i] = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+        tmp_Ki = Ki_r.copy() # real space, 3d
+        tmp_Ki = np.fft.ifftn(tmp_Ki) # reciprocal space, 3d
+        tmp_Ki = tmp_Ki.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+        Ki[:,i] = tmp_Ki[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
 
         # non-ace exchange
-        tmp = Ki_r # real space, 3d
-        tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-        tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-        exchange[:,i] = tmp[basis.kg_to_g[kid]] # map last term to small flattened basis
+        tmp_exch = Ki_r.copy() # real space, 3d
+        tmp_exch = np.fft.ifftn(tmp_exch) # reciprocal space, 3d
+        tmp_exch = tmp_exch.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+        exchange[:,i] = tmp_exch[basis.kg_to_g[kid]] # map last term to small flattened basis
 
     return F_c, Ki, exchange * adiabatic_exchange_lambda
 
@@ -581,6 +582,7 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
             Cij = tmp.ravel()[basis.flat_idx]
 
             # Kij(g) = Cij(g) * FFT[1/|r-r'|]
+            Kij_G[:] = 0.0
             Kij_G.ravel()[basis.flat_idx] = Cij * basis.inv_g2 #Kij
 
             # Kij(r) = FFT^-1[Kij(g)]
@@ -593,14 +595,14 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
         Ki_r *= -4.0 * np.pi / basis.omega
 
     # action of potential on orbitals in real space, then transform to reciprocal space
-    tmp = v_r * current_phi  # real space, 3d
-    tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-    tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-    tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-    tmp = tmp.reshape(c.shape) # for lobpcg
+    tmp_vphi = v_r * current_phi  # real space, 3d
+    tmp_vphi = np.fft.ifftn(tmp_vphi) # reciprocal space, 3d
+    tmp_vphi = tmp_vphi.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+    tmp_vphi = tmp_vphi[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+    tmp_vphi = tmp_vphi.reshape(c.shape) # for lobpcg
 
     #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
-    F_c = T[kid][:, None] * c + tmp + Vnl @ c # lobpcg
+    F_c = T[kid][:, None] * c + tmp_vphi + Vnl @ c # lobpcg
 
     if xc == 'hf':
         if ace_exchange :
@@ -616,12 +618,12 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
  
         else :
 
-            tmp = Ki_r # real space, 3d
-            tmp = np.fft.ifftn(tmp) # reciprocal space, 3d
-            tmp = tmp.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
-            tmp = tmp[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
-            tmp = tmp.reshape(c.shape) # for lobpcg
-            F_c += tmp * adiabatic_exchange_lambda
+            tmp_exch = Ki_r # real space, 3d
+            tmp_exch = np.fft.ifftn(tmp_exch) # reciprocal space, 3d
+            tmp_exch = tmp_exch.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
+            tmp_exch = tmp_exch[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
+            tmp_exch = tmp_exch.reshape(c.shape) # for lobpcg
+            F_c += tmp_exch * adiabatic_exchange_lambda
 
     #print(np.linalg.norm(ace - tmp))
 
@@ -712,18 +714,14 @@ def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_funct
         v_beta +=  v_xc_beta
 
     # alpha-spin potential in real space
-    v_alpha_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-    v_alpha_r.ravel()[basis.flat_idx] = v_alpha + v_ne
-    v_alpha_r = np.fft.fftn(v_alpha_r).real
+    v_alpha_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    v_alpha_G.ravel()[basis.flat_idx] = v_alpha + v_ne
+    v_alpha_r = np.fft.fftn(v_alpha_G).real
 
     # beta-spin potential in real space
-    v_beta_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-    v_beta_r.ravel()[basis.flat_idx] = v_beta + v_ne
-    v_beta_r = np.fft.fftn(v_beta_r).real
-
-    #if jellium:
-    #    v_alpha_r -= v_alpha_r.mean()
-    #    v_beta_r -= v_beta_r.mean()
+    v_beta_G = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+    v_beta_G.ravel()[basis.flat_idx] = v_beta + v_ne
+    v_beta_r = np.fft.fftn(v_beta_G).real
 
     return v_coulomb, v_alpha_r, v_beta_r
 
@@ -797,17 +795,17 @@ def kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, bas
     """
 
     # 1. densities in reciprocal space
-    tmp = np.fft.ifftn(rho_alpha)
-    rho_alpha_G_new = tmp.ravel()[basis.flat_idx]
+    tmp_alpha = np.fft.ifftn(rho_alpha)
+    rho_alpha_G_new = tmp_alpha.ravel()[basis.flat_idx]
 
-    tmp = np.fft.ifftn(rho_alpha_old)
-    rho_alpha_G_old = tmp.ravel()[basis.flat_idx]
+    tmp_alpha = np.fft.ifftn(rho_alpha_old)
+    rho_alpha_G_old = tmp_alpha.ravel()[basis.flat_idx]
 
-    tmp = np.fft.ifftn(rho_beta)
-    rho_beta_G_new = tmp.ravel()[basis.flat_idx]
+    tmp_beta = np.fft.ifftn(rho_beta)
+    rho_beta_G_new = tmp_beta.ravel()[basis.flat_idx]
 
-    tmp = np.fft.ifftn(rho_beta_old)
-    rho_beta_G_old = tmp.ravel()[basis.flat_idx]
+    tmp_beta = np.fft.ifftn(rho_beta_old)
+    rho_beta_G_old = tmp_beta.ravel()[basis.flat_idx]
 
     # 2. residual in reciprocal space
     res_alpha_G = rho_alpha_G_new - rho_alpha_G_old
@@ -827,12 +825,12 @@ def kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, bas
     rho_beta_G_new = rho_beta_G_old + alpha * res_beta_G_pre
 
     # 5. new density in real space wtf
-    tmp.ravel()[basis.flat_idx] = rho_alpha_G_new
-    rho_alpha = np.fft.fftn(tmp).real
+    tmp_alpha.ravel()[basis.flat_idx] = rho_alpha_G_new
+    rho_alpha = np.fft.fftn(tmp_alpha).real
     rho_alpha.clip(min = 0)
 
-    tmp.ravel()[basis.flat_idx] = rho_beta_G_new
-    rho_beta = np.fft.fftn(tmp).real
+    tmp_beta.ravel()[basis.flat_idx] = rho_beta_G_new
+    rho_beta = np.fft.fftn(tmp_beta).real
     rho_beta.clip(min = 0)
 
     return rho_alpha, rho_beta
@@ -920,7 +918,8 @@ def uks(cell, basis,
     # madelung correction
     madelung = tools.pbc.madelung(cell, basis.kpts)
 
-    nalpha, nbeta = cell.nelec
+    #nalpha, nbeta = cell.nelec
+    nbeta, nalpha = cell.nelec
     total_charge = cell.charge
 
     # jellium
@@ -931,8 +930,10 @@ def uks(cell, basis,
         enuc = 0.0
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
-    nmo_alpha = nalpha  #+ 1
-    nmo_beta = nbeta #+ 1
+    nmo_alpha = nalpha #+ 1
+    nmo_beta = nbeta #nbeta #+ 1
+    #if guess_mix:
+    #    nmo_alpha += 1
     
     # increase nmo if we're doing smearing
     if kBT is not None:
@@ -1032,8 +1033,13 @@ def uks(cell, basis,
         # jellium orbital guess, plus some noise
         if jellium:
             eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
+
             epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
-            Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-6
+            # mix in other plane waves? 
+            #for j in range (0, nmo_alpha):
+            #    Calpha[kid][:, j] += 1e-5 * ca[:, nmo_alpha + j] 
+
+            Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-5
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = Calpha[kid].copy()
             #one_electron_energy = np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nalpha])**2, T[kid]))
@@ -1043,9 +1049,6 @@ def uks(cell, basis,
     rho_alpha, phi_alpha = get_density(basis, Calpha[0], nalpha, nmo_alpha, kid, occ_num_alpha)
     rho_beta, phi_beta = get_density(basis, Cbeta[0], nbeta, nmo_beta, kid, occ_num_beta)
 
-    # jellium guess
-    rho_alpha = nalpha / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
-    rho_beta = nbeta / basis.omega * np.ones(basis.real_space_grid_dim, dtype = 'float64')
     rho_alpha_old = rho_alpha.copy()
     rho_beta_old = rho_beta.copy()
 
@@ -1057,252 +1060,233 @@ def uks(cell, basis,
     diis = lib.diis.DIIS()
     diis.space = diis_dimension
 
-    # begin UKS iterations
-    xc_energy = 0.0
-    scf_iter = 0 # initialize variable incase maxiter = 0
-    one_electron_energy = 0.0
-    coulomb_energy = 0.0
+    adiabatic_exchange_lambda = 0.0
+    for i in range (0, 1):
+        adiabatic_exchange_lambda += 1
 
-    adiabatic_exchange_lambda = 1.0
-    for scf_iter in range(maxiter):
-
+        # begin UKS iterations
+        xc_energy = 0.0
+        scf_iter = 0 # initialize variable incase maxiter = 0
         one_electron_energy = 0.0
         coulomb_energy = 0.0
 
-        # compute local potentials
-        v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
+        for scf_iter in range(maxiter):
 
-        # evaluate the orbital gradient
-        error_vector = np.zeros(0)
-        for kid in range( len(basis.kpts) ):
+            one_electron_energy = 0.0
+            coulomb_energy = 0.0
 
-            # TODO: don't store non-local pseudopotential in the planewave basis
-            Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-            Vnl = Vnl + Vnl.conj().T
-            diag = np.diag(Vnl)
-            np.fill_diagonal(Vnl, 0.5 * diag)
+            # compute local potentials
+            v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
 
-            # jellium
-            if jellium:
-                Vnl *= 0.0
+            # evaluate the orbital gradient
+            error_vector = np.zeros(0)
+            for kid in range( len(basis.kpts) ):
 
-            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, Vnl, xc, occ_num_alpha, adiabatic_exchange_lambda)
-            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, Vnl, xc, occ_num_beta, adiabatic_exchange_lambda)
+                # TODO: don't store non-local pseudopotential in the planewave basis
+                Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
+                Vnl = Vnl + Vnl.conj().T
+                diag = np.diag(Vnl)
+                np.fill_diagonal(Vnl, 0.5 * diag)
 
-            if xc == 'hf':
+                # jellium
+                if jellium:
+                    Vnl *= 0.0
 
-                B_alpha_ace[kid] = build_B_ace(nalpha, nmo_alpha, Calpha[kid], Ki_alpha[kid], exchange_alpha, adiabatic_exchange_lambda)
-                B_beta_ace[kid] = build_B_ace(nbeta, nmo_beta, Cbeta[kid], Ki_beta[kid], exchange_beta, adiabatic_exchange_lambda)
+                Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, Vnl, xc, occ_num_alpha, adiabatic_exchange_lambda)
+                Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, Vnl, xc, occ_num_beta, adiabatic_exchange_lambda)
 
-                Fa_c += exchange_alpha
-                Fb_c += exchange_beta
-            
-            Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
-            Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
+                if xc == 'hf':
 
-            #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nmo_alpha] * Calpha[kid][:,:nmo_alpha]
-            #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nmo_beta] * Cbeta[kid][:,:nmo_beta]
+                    B_alpha_ace[kid] = build_B_ace(nalpha, nmo_alpha, Calpha[kid], Ki_alpha[kid], exchange_alpha, adiabatic_exchange_lambda)
+                    B_beta_ace[kid] = build_B_ace(nbeta, nmo_beta, Cbeta[kid], Ki_beta[kid], exchange_beta, adiabatic_exchange_lambda)
 
-            c_Fa_c = Calpha[kid][:, :nmo_alpha].conj().T @ Fa_c
-            c_Fb_c = Cbeta[kid][:, :nmo_beta].conj().T @ Fb_c
-            grad_a = Fa_c - Calpha[kid][:,:nmo_alpha] @ c_Fa_c
-            grad_b = Fb_c - Cbeta[kid][:,:nmo_beta] @ c_Fb_c
+                    Fa_c += exchange_alpha
+                    Fb_c += exchange_beta
+                
+                Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
+                Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
 
-            error_vector = np.hstack( (error_vector, grad_a.flatten(), grad_b.flatten() ) )
+                #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nmo_alpha] * Calpha[kid][:,:nmo_alpha]
+                #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nmo_beta] * Cbeta[kid][:,:nmo_beta]
 
-        # norm of the orbital gradient for convergence check
-        conv = np.linalg.norm(error_vector)
+                c_Fa_c = Calpha[kid][:, :nmo_alpha].conj().T @ Fa_c
+                c_Fb_c = Cbeta[kid][:, :nmo_beta].conj().T @ Fb_c
+                grad_a = Fa_c - Calpha[kid][:,:nmo_alpha] @ c_Fa_c
+                grad_b = Fb_c - Cbeta[kid][:,:nmo_beta] @ c_Fb_c
 
-        # kerker preconditioning
-        rho_alpha, rho_beta = kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, nalpha + nbeta, q0 = kerker_q0, alpha = kerker_alpha)
+                error_vector = np.hstack( (error_vector, grad_a.flatten(), grad_b.flatten() ) )
 
-        solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
-        new_solution_vector = diis.update(solution_vector, error_vector)
+            # norm of the orbital gradient for convergence check
+            conv = np.linalg.norm(error_vector)
 
-        rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
-        rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
+            # kerker preconditioning
+            rho_alpha, rho_beta = kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, nalpha + nbeta, q0 = kerker_q0, alpha = kerker_alpha)
 
-        rho_alpha.clip(min = 0)
-        rho_beta.clip(min = 0)
+            solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
+            new_solution_vector = diis.update(solution_vector, error_vector)
 
-        # recompute potentials after kerker preconditioning and diis extrapolation
-        v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
+            rho_alpha = new_solution_vector[:len(solution_vector)//2].reshape(rho_alpha_old.shape)
+            rho_beta = new_solution_vector[len(solution_vector)//2:].reshape(rho_beta_old.shape)
 
-        one_electron_energy = 0.0
-        coulomb_energy = 0.0
+            rho_alpha = rho_alpha.clip(min = 0).real
+            rho_beta = rho_beta.clip(min = 0).real
 
-        rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
-        rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+            # recompute potentials after kerker preconditioning and diis extrapolation
+            v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
 
-        # diagonalize fock matrix with extrapolated potential
+            one_electron_energy = 0.0
+            coulomb_energy = 0.0
 
-        for kid in range ( len(basis.kpts) ):
+            rho_alpha = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
+            rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
-            Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-            Vnl = Vnl + Vnl.conj().T
-            diag = np.diag(Vnl)
-            np.fill_diagonal(Vnl, 0.5 * diag)
+            # diagonalize fock matrix with extrapolated potential
 
-            # jellium
-            if jellium:
-                Vnl *= 0.0
+            for kid in range ( len(basis.kpts) ):
 
-            def lobpcg_alpha(c):
-                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha, adiabatic_exchange_lambda)
+                Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
+                Vnl = Vnl + Vnl.conj().T
+                diag = np.diag(Vnl)
+                np.fill_diagonal(Vnl, 0.5 * diag)
 
-            def lobpcg_beta(c):
-                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta, adiabatic_exchange_lambda)
+                # jellium
+                if jellium:
+                    Vnl *= 0.0
 
-            Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
-            Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
+                def lobpcg_alpha(c):
+                    return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha, adiabatic_exchange_lambda)
 
-            epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*1e-1)
+                def lobpcg_beta(c):
+                    return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta, adiabatic_exchange_lambda)
+
+                Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
+                Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
+
+                epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*1e-1)
+                if not jellium:
+                    epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*1e-1)
+                else:
+                    Cbeta[kid] = Calpha[kid].copy()
+                    epsilon_beta[kid] = epsilon_alpha[kid].copy()
+
+                # HF orbitals need to be shifted for smearing to work correctly
+                if xc == 'hf':
+                    epsilon_alpha[kid] -= madelung * occ_num_alpha
+                    epsilon_beta[kid] -= madelung * occ_num_beta
+
+                # update occupation numbers for smearing
+                mu_alpha = find_chemical_potential(nalpha, epsilon_alpha[kid], kBT = kBT)
+                mu_beta = find_chemical_potential(nbeta, epsilon_beta[kid], kBT = kBT)
+                #print('optimized mu (alpha)', mu_alpha)
+                #print('optimized mu (beta)', mu_beta)
+
+                occ_num_alpha = fermi_dirac(nalpha, epsilon_alpha[kid], mu_alpha, kBT = kBT)
+                occ_num_beta = fermi_dirac(nbeta, epsilon_beta[kid], mu_beta, kBT = kBT)
+                #print(occ_num_alpha)
+                #print('alpha', occ_num_alpha)
+                #print('beta ', occ_num_beta)
+
+                # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
+                #if guess_mix and scf_iter == 0:
+
+                #    c = np.cos(0.05 * np.pi)
+                #    s = np.sin(0.05 * np.pi)
+
+                #    tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
+                #    tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
+
+                #    Calpha[kid][:, nalpha-1] = tmp1.copy()
+                #    Calpha[kid][:, nalpha] = tmp2.copy()
+
+                # why do i need to orthonormalize my orbitals???
+                Calpha[kid] = orthonormalize(Calpha[kid])
+                Cbeta[kid] = orthonormalize(Cbeta[kid])
+                if jellium:
+                    Cbeta[kid] = Calpha[kid].copy()
+
+                # update density
+                my_rho_alpha, phi_alpha = get_density(basis, Calpha[kid], nalpha, nmo_alpha, kid, occ_num_alpha)
+                my_rho_beta, phi_beta = get_density(basis, Cbeta[kid], nbeta, nmo_beta, kid, occ_num_beta)
+
+                # density should be non-negative ...
+                rho_alpha += my_rho_alpha.clip(min = 0).real
+                rho_beta += my_rho_beta.clip(min = 0).real
+
+                # kinetic energy part of the one-electron energy
+                one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nmo_alpha])**2 * occ_num_alpha, T[kid]))
+                one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nmo_beta])**2 * occ_num_beta, T[kid]))
+
+                # nonlocal pseudopotential part of the energy
+                if not jellium:
+                    one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nmo_alpha, kid, occ_num_alpha)
+                    one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nmo_beta, kid, occ_num_beta)
+
+            # nuclear potential / local pseudopotential part of the one-electron energy
             if not jellium:
-                epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*1e-1)
-            else:
-                Cbeta[kid] = Calpha[kid].copy()
-                epsilon_beta[kid] = epsilon_alpha[kid].copy()
+                v_ne_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+                v_ne_r.ravel()[basis.flat_idx] = v_ne
+                v_ne_r = np.fft.fftn(v_ne_r).real
+                one_electron_energy += ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum((rho_alpha + rho_beta) * v_ne_r)
 
-            # HF orbitals need to be shifted for smearing to work correctly
-            if xc == 'hf':
-                epsilon_alpha[kid] -= madelung * occ_num_alpha
-                epsilon_beta[kid] -= madelung * occ_num_beta
-                #epsilon_alpha[kid][:nalpha] -= madelung
-                #epsilon_beta[kid][:nbeta] -= madelung
-                #print(epsilon_alpha[kid])
-                #print(epsilon_beta[kid])
+            # coulomb part of the energy: 1/2 J
+            v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
+            v_coulomb_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
+            v_coulomb_r.ravel()[basis.flat_idx] = v_coulomb
+            v_coulomb_r = np.fft.fftn(v_coulomb_r).real
+            coulomb_energy = 0.5 * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum((rho_alpha + rho_beta) * v_coulomb_r)
 
-            #if not jellium:
+            # save old density
+            rho_alpha_old = rho_alpha.copy()
+            rho_beta_old = rho_beta.copy()
 
-            #    Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
-            #    Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
+            # exchange-correlation energy
+            if xc != 'hf' :
+                xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
 
-            #    epsilon_alpha[kid], Calpha[kid] = scipy.sparse.linalg.lobpcg(Fa_C, Calpha[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
-            #    epsilon_beta[kid], Cbeta[kid] = scipy.sparse.linalg.lobpcg(Fb_C, Cbeta[kid], largest=False, maxiter=200, tol=d_convergence*0.01)
+            else :
 
-            #else :
+                # exact exchange energy
+                xc_energy = get_exact_exchange_energy(basis, phi_alpha, nmo_alpha, Calpha, occ_num_alpha)
+                if nbeta > 0:
+                    my_xc_energy = get_exact_exchange_energy(basis, phi_beta, nmo_beta, Cbeta, occ_num_beta)
+                    xc_energy += my_xc_energy
 
-            #    eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
-            #    epsilon_alpha[kid], Calpha[kid] = eps_a[:nalpha], ca[:, :nalpha]
+                # jellium
+                if not jellium:
+                    xc_energy -= 0.5 * (nalpha + nbeta) * madelung
 
-            #eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
-            #epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
-            #print(epsilon_alpha[kid])
-            #exit()
-
-            # update occupation numbers for smearing
-            mu_alpha = find_chemical_potential(nalpha, epsilon_alpha[kid], kBT = kBT)
-            mu_beta = find_chemical_potential(nbeta, epsilon_beta[kid], kBT = kBT)
-            #print('optimized mu (alpha)', mu_alpha)
-            #print('optimized mu (beta)', mu_beta)
-
-            occ_num_alpha = fermi_dirac(nalpha, epsilon_alpha[kid], mu_alpha, kBT = kBT)
-            occ_num_beta = fermi_dirac(nbeta, epsilon_beta[kid], mu_beta, kBT = kBT)
-            #print(occ_num_alpha)
-            #print(occ_num_alpha)
-            #print(occ_num_beta)
-
-            # break spin symmetry? # TODO this is broken, which probably indicates there is some other problem ...
-            #if guess_mix is True and scf_iter == 0:
-
-            #    c = np.cos(0.05 * np.pi)
-            #    s = np.sin(0.05 * np.pi)
-
-            #    tmp1 = c * Calpha[kid][:, nalpha-1] - s * Calpha[kid][:, nalpha]
-            #    tmp2 = s * Calpha[kid][:, nalpha-1] + c * Calpha[kid][:, nalpha]
-
-            #    Calpha[kid][:, nalpha-1] = tmp1.copy()
-            #    Calpha[kid][:, nalpha] = tmp2.copy()
-
-            # why do i need to orthonormalize my orbitals???
-            Calpha[kid] = orthonormalize(Calpha[kid])
-            Cbeta[kid] = orthonormalize(Cbeta[kid])
+            # total energy
+            new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
             if jellium:
-                Cbeta[kid] = Calpha[kid].copy()
+                new_total_energy -= 0.5 * (nalpha + nbeta) * madelung
 
-            # update density
-            my_rho_alpha, phi_alpha = get_density(basis, Calpha[kid], nalpha, nmo_alpha, kid, occ_num_alpha)
-            my_rho_beta, phi_beta = get_density(basis, Cbeta[kid], nbeta, nmo_beta, kid, occ_num_beta)
+            # convergence in energy
+            energy_diff = np.abs(new_total_energy - old_total_energy)
 
-            # density should be non-negative ...
-            rho_alpha += my_rho_alpha.clip(min = 0)
-            rho_beta += my_rho_beta.clip(min = 0)
+            # update energy
+            old_total_energy = new_total_energy
 
-            # kinetic energy part of the one-electron energy
-            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nmo_alpha])**2 * occ_num_alpha, T[kid]))
-            one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nmo_beta])**2 * occ_num_beta, T[kid]))
+            # charge
+            charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho_alpha + rho_beta))
 
-            # nonlocal pseudopotential part of the energy
-            if not jellium:
-                one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nmo_alpha, kid, occ_num_alpha)
-                one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nmo_beta, kid, occ_num_beta)
+            if jellium:
+                print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf %20.12f %20.12f %20.12f %20.12f %20.12f" %  ( scf_iter, new_total_energy, energy_diff, conv, charge, np.linalg.norm(Calpha[kid] - Cbeta[kid]), np.real(one_electron_energy), np.real(coulomb_energy), np.real(xc_energy), -0.5 * (nalpha + nbeta) * madelung))
+            else :
+                print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
 
-        # nuclear potential / local pseudopotential part of the one-electron energy
-        if not jellium:
-            v_ne_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-            v_ne_r.ravel()[basis.flat_idx] = v_ne
-            v_ne_r = np.fft.fftn(v_ne_r).real
-            one_electron_energy += ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum((rho_alpha + rho_beta) * v_ne_r)
+            if conv < d_convergence and energy_diff < e_convergence:
+                break
 
-        # coulomb part of the energy: 1/2 J
-        v_coulomb_r = np.zeros(basis.real_space_grid_dim, dtype = 'complex128')
-        v_coulomb_r.ravel()[basis.flat_idx] = v_coulomb
-        v_coulomb_r = np.fft.fftn(v_coulomb_r).real
-        coulomb_energy = 0.5 * ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum((rho_alpha + rho_beta) * v_coulomb_r)
+        if scf_iter == maxiter - 1:
+            print('')
+            print('    UKS iterations did not converge.')
+            print('')
+        else:
+            print('')
+            print('    UKS iterations converged!')
+            print('')
 
-        # save old density
-        rho_alpha_old = rho_alpha.copy()
-        rho_beta_old = rho_beta.copy()
-
-        # exchange-correlation energy
-        if xc != 'hf' :
-            xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
-
-        else :
-
-            # exact exchange energy
-            xc_energy = get_exact_exchange_energy(basis, phi_alpha, nmo_alpha, Calpha, occ_num_alpha)
-            if nbeta > 0:
-                my_xc_energy = get_exact_exchange_energy(basis, phi_beta, nmo_beta, Cbeta, occ_num_beta)
-                xc_energy += my_xc_energy
-
-            # jellium
-            if not jellium:
-                xc_energy -= 0.5 * (nalpha + nbeta) * madelung
-
-        # total energy
-        new_total_energy = np.real(one_electron_energy) + np.real(coulomb_energy) + np.real(xc_energy) + enuc
-        if jellium:
-            new_total_energy -= 0.5 * (nalpha + nbeta) * madelung
-
-        # convergence in energy
-        energy_diff = np.abs(new_total_energy - old_total_energy)
-
-        # update energy
-        old_total_energy = new_total_energy
-
-        # charge
-        charge = ( basis.omega / ( basis.real_space_grid_dim[0] * basis.real_space_grid_dim[1] * basis.real_space_grid_dim[2] ) ) * np.sum(np.absolute(rho_alpha + rho_beta))
-
-        if jellium:
-            print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf %20.12f %20.12f %20.12f %20.12f %20.12f" %  ( scf_iter, new_total_energy, energy_diff, conv, charge, np.linalg.norm(Calpha[kid] - Cbeta[kid]), np.real(one_electron_energy), np.real(coulomb_energy), np.real(xc_energy), -0.5 * (nalpha + nbeta) * madelung))
-        else :
-            print("    %5i %20.12lf %20.12lf %20.12lf %10.6lf" %  ( scf_iter, new_total_energy, energy_diff, conv, charge))
-
-       # if scf_iter < 9:
-       #     adiabatic_exchange_lambda += 0.1
-
-        if conv < d_convergence and energy_diff < e_convergence: # and scf_iter >= 10:
-            break
-
-    if scf_iter == maxiter - 1:
-        print('')
-        print('    UKS iterations did not converge.')
-        print('')
-    else:
-        print('')
-        print('    UKS iterations converged!')
-        print('')
+    # end of adiabatic increase in exchange 
 
 
     print('    ==> energy components <==')
