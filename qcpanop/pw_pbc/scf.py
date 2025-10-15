@@ -696,7 +696,7 @@ def compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_funct
 
     v_coulomb = 4.0 * np.pi * rhog * basis.inv_g2
 
-    # jellium ... but only true in the thermodynamic limit
+    # jellium ... but only true in the thermodynamic limit ... or if we want the uniform density
     #if jellium:
     #    v_coulomb *= 0.0
 
@@ -780,60 +780,64 @@ def find_chemical_potential(ne, eps, kBT = None, tol=1e-10, maxit = 200):
 
     return mu_mid
 
-def kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, ne, q0 = None, alpha = 0.05):
+def kerker_preconditioning(rho_alpha_out, rho_beta_out, rho_alpha_in, rho_beta_in, basis, ne, q0=None, alpha=0.05):
     """
-    kerker preconditioning
+    Kerker preconditioning.
     
-    :param rho_alpha: current alpha-spin density 
-    :param rho_beta: current beta-spin density
-    :param rho_alpha_old: previous alpha-spin density 
-    :param rho_beta_old: previous beta-spin density
+    :param rho_alpha_out: current output alpha-spin density (real space)
+    :param rho_beta_out: current output beta-spin density (real space)
+    :param rho_alpha_in: previous input alpha-spin density (real space)
+    :param rho_beta_in: previous input beta-spin density (real space)
     :param basis: the plane-wave basis object
     :param ne: number of electrons
-    :param q0: screening length. if None, chosen to be the Fermi wavevector for jellium
-    :param alpha: mixing parameter. default should be good for metallic systems
+    :param q0: screening length. if None, chosen to be the Thomas-Fermi wavevector
+    :param alpha: mixing parameter
     """
 
-    # 1. densities in reciprocal space
-    tmp_alpha = np.fft.ifftn(rho_alpha)
-    rho_alpha_G_new = tmp_alpha.ravel()[basis.flat_idx]
+    # 1. transform densities to reciprocal space
+    rhoG_alpha_out_full = np.fft.ifftn(rho_alpha_out)
+    rhoG_alpha_in_full = np.fft.ifftn(rho_alpha_in)
+    rhoG_beta_out_full = np.fft.ifftn(rho_beta_out)
+    rhoG_beta_in_full = np.fft.ifftn(rho_beta_in)
 
-    tmp_alpha = np.fft.ifftn(rho_alpha_old)
-    rho_alpha_G_old = tmp_alpha.ravel()[basis.flat_idx]
+    rhoG_alpha_out = rhoG_alpha_out_full.ravel()[basis.flat_idx]
+    rhoG_alpha_in = rhoG_alpha_in_full.ravel()[basis.flat_idx]
+    rhoG_beta_out = rhoG_beta_out_full.ravel()[basis.flat_idx]
+    rhoG_beta_in = rhoG_beta_in_full.ravel()[basis.flat_idx]
 
-    tmp_beta = np.fft.ifftn(rho_beta)
-    rho_beta_G_new = tmp_beta.ravel()[basis.flat_idx]
+    # 2. calculate residual in reciprocal space
+    res_alpha_G = rhoG_alpha_out - rhoG_alpha_in
+    res_beta_G = rhoG_beta_out - rhoG_beta_in
 
-    tmp_beta = np.fft.ifftn(rho_beta_old)
-    rho_beta_G_old = tmp_beta.ravel()[basis.flat_idx]
-
-    # 2. residual in reciprocal space
-    res_alpha_G = rho_alpha_G_new - rho_alpha_G_old
-    res_beta_G = rho_beta_G_new - rho_beta_G_old
-
-    # 3. preconditioner
+    # 3. define the preconditioner (HIGH-PASS FILTER)
     if q0 is None:
-        q0 = np.sqrt(4.0/np.pi) * (3.0 * np.pi**2 * ne / basis.omega)**(1.0/6.0) # for jellium
+        # Thomas-Fermi screening wavevector for jellium
+        q0 = np.sqrt(4.0 / np.pi) * (3.0 * np.pi**2 * ne / basis.omega)**(1.0 / 6.0)
+
     P = basis.g2 / (basis.g2 + q0**2)
-    P[0] = 0.0
 
-    res_alpha_G_pre = res_alpha_G * P
-    res_beta_G_pre = res_beta_G * P
+    # 4. apply preconditioned update to get the mixed density in reciprocal space
+    rhoG_alpha_mixed = rhoG_alpha_in + alpha * P * res_alpha_G
+    rhoG_beta_mixed = rhoG_beta_in + alpha * P * res_beta_G
 
-    # 4. new density in reciprocal space
-    rho_alpha_G_new = rho_alpha_G_old + alpha * res_alpha_G_pre
-    rho_beta_G_new = rho_beta_G_old + alpha * res_beta_G_pre
+    shape = rhoG_alpha_out_full.shape
+    rhoG_alpha_full = np.zeros(shape, dtype=complex).ravel()
+    rhoG_beta_full = np.zeros(shape, dtype=complex).ravel()
 
-    # 5. new density in real space wtf
-    tmp_alpha.ravel()[basis.flat_idx] = rho_alpha_G_new
-    rho_alpha = np.fft.fftn(tmp_alpha).real
-    rho_alpha.clip(min = 0)
+    rhoG_alpha_full[basis.flat_idx] = rhoG_alpha_mixed
+    rhoG_beta_full[basis.flat_idx] = rhoG_beta_mixed
 
-    tmp_beta.ravel()[basis.flat_idx] = rho_beta_G_new
-    rho_beta = np.fft.fftn(tmp_beta).real
-    rho_beta.clip(min = 0)
+    rhoG_alpha_full = rhoG_alpha_full.reshape(shape)
+    rhoG_beta_full = rhoG_beta_full.reshape(shape)
 
-    return rho_alpha, rho_beta
+    # 5. transform back to real space
+    rho_alpha_next = np.fft.ifftn(rhoG_alpha_full).real
+    rho_beta_next = np.fft.ifftn(rhoG_beta_full).real
+
+    np.maximum(rho_alpha_next, 0.0, out=rho_alpha_next)
+    np.maximum(rho_beta_next, 0.0, out=rho_beta_next)
+    
+    return rho_alpha_next, rho_beta_next
 
 def uks(cell, basis, 
         xc = 'lda', 
@@ -845,9 +849,9 @@ def uks(cell, basis,
         jellium = False,
         jellium_ne = 2,
         maxiter=500,
-        kBT=None,
-        kerker_q0=None,
-        kerker_alpha=0.05):
+        kBT=None):
+        #kerker_q0=None,
+        #kerker_alpha=0.05):
 
     """
 
@@ -864,10 +868,10 @@ def uks(cell, basis,
     :return Calpha: alpha MO coefficients
     :return Cbeta: beta MO coefficients
     :return kBT: boltzman factor times temperature (for smearing)
-    :param kerker_q0: screening length for kerker preconditioning. if None, chosen to be the Fermi wavevector for jellium
-    :param kerker_alpha: kerker mixing parameter. default should be good for metallic systems
 
     """
+    # :param kerker_q0: screening length for kerker preconditioning. if None, chosen to be the Fermi wavevector for jellium
+    # :param kerker_alpha: kerker mixing parameter. default should be good for metallic systems
 
     print('')
     print('    ************************************************')
@@ -931,9 +935,10 @@ def uks(cell, basis,
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
     nmo_alpha = nalpha #+ 1
-    nmo_beta = nbeta #nbeta #+ 1
+    nmo_beta = nbeta #+ 1
     #if guess_mix:
     #    nmo_alpha += 1
+    #    nmo_beta += 1
     
     # increase nmo if we're doing smearing
     if kBT is not None:
@@ -961,9 +966,9 @@ def uks(cell, basis,
     print('    no. total beta bands:                        %20i' % ( nmo_beta ) )
     print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
     print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
-    if kerker_q0 is not None:
-        print('    kerker screening length                      %20.2f' % ( kerker_q0) )
-    print('    kerker mixing parameter                      %20.2f' % ( kerker_alpha) )
+    #if kerker_q0 is not None:
+    #    print('    kerker screening length                      %20.2f' % ( kerker_q0) )
+    #print('    kerker mixing parameter                      %20.2f' % ( kerker_alpha) )
 
     if guess_mix :
         print("")
@@ -1010,8 +1015,8 @@ def uks(cell, basis,
 
     for kid in range ( len(basis.kpts) ):
 
-        #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-8)
-        #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-8)
+        #Calpha.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-4)
+        #Cbeta.append(np.random.rand(basis.n_plane_waves_per_k[kid], nmo_beta) * 1e-4)
         Calpha.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_alpha), dtype='complex128'))
         Cbeta.append(np.zeros((basis.n_plane_waves_per_k[kid], nmo_beta), dtype='complex128'))
         for i in range (nmo_alpha):
@@ -1032,14 +1037,20 @@ def uks(cell, basis,
 
         # jellium orbital guess, plus some noise
         if jellium:
-            eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
 
+            #lowest_energy_T_index = np.argsort(T[kid])[:nalpha]
+            #epsilon_alpha[kid] = T[kid][lowest_energy_T_index]
+            #Calpha[kid] = np.zeros((len(T[kid]), nalpha), dtype=np.complex128)
+            #for orb_idx, pw_idx in enumerate(lowest_energy_T_index):
+            #    Calpha[kid][pw_idx, orb_idx] = 1.0
+
+            eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
             epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
             # mix in other plane waves? 
             #for j in range (0, nmo_alpha):
-            #    Calpha[kid][:, j] += 1e-5 * ca[:, nmo_alpha + j] 
+            #    Calpha[kid][:, j] += 1e-3 * ca[:, nmo_alpha + j] 
 
-            Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-5
+            #Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-3
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = Calpha[kid].copy()
             #one_electron_energy = np.sum(np.einsum('pi,p->i', np.abs(Calpha[kid][:,:nalpha])**2, T[kid]))
@@ -1075,9 +1086,18 @@ def uks(cell, basis,
             one_electron_energy = 0.0
             coulomb_energy = 0.0
 
-            # compute local potentials
-            v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
+            # kerker preconditioning
+            #rho_alpha, rho_beta = kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, nalpha + nbeta, q0 = kerker_q0, alpha = kerker_alpha)
+            #print(np.linalg.norm(new_rho_alpha-rho_alpha), np.linalg.norm(new_rho_beta-rho_beta))
 
+            # damping
+            damp = 0.5
+            if scf_iter > 0:
+                rho_alpha = rho_alpha_old * (1.0 - damp) + rho_alpha * damp
+                rho_beta = rho_beta_old * (1.0 - damp) + rho_beta * damp
+
+                # compute local potentials
+                v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
             # evaluate the orbital gradient
             error_vector = np.zeros(0)
             for kid in range( len(basis.kpts) ):
@@ -1119,9 +1139,6 @@ def uks(cell, basis,
             # norm of the orbital gradient for convergence check
             conv = np.linalg.norm(error_vector)
 
-            # kerker preconditioning
-            rho_alpha, rho_beta = kerker_preconditioning(rho_alpha, rho_beta, rho_alpha_old, rho_beta_old, basis, nalpha + nbeta, q0 = kerker_q0, alpha = kerker_alpha)
-
             solution_vector = np.hstack( (rho_alpha.flatten(), rho_beta.flatten()) )
             new_solution_vector = diis.update(solution_vector, error_vector)
 
@@ -1131,7 +1148,7 @@ def uks(cell, basis,
             rho_alpha = rho_alpha.clip(min = 0).real
             rho_beta = rho_beta.clip(min = 0).real
 
-            # recompute potentials after kerker preconditioning and diis extrapolation
+            # recompute potentials after diis extrapolation
             v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
 
             one_electron_energy = 0.0
