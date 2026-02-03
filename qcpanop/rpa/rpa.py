@@ -4,9 +4,7 @@ random phase approximation correlation energy
 
 """
 
-import warnings
 import numpy as np
-import scipy
 
 from pyscf import ao2mo
 
@@ -18,8 +16,8 @@ class rpa:
         """
         initialize rpa class
 
-        :params mol: pyscf molecule object
-        :params mf: pyscf mean field object
+        :param mol: pyscf molecule object
+        :param mf: pyscf mean field object
 
         """
 
@@ -67,6 +65,8 @@ class rpa:
     def correlation_energy(self):
         """
         rpa correlation energy from solving rpa eigenvalue problem
+
+        :return correlation energy, 0.5 Tr(w - A)
         """
 
         print("")
@@ -86,6 +86,15 @@ class rpa:
         return rpa_correlation_energy
 
     def ricatti_solver(self, maxiter = 50, r_convergence = 1e-6, e_convergence = 1e-8):
+        """
+        solve B + A@T + T@A + T@B@T = 0
+        
+        :param maxiter: maximum number of iterations
+        :param r_convergence: convergence in residual
+        :param e_convergence: convergence in correlation energy, 0.5 Tr(B@T)
+
+        :return correlation energy, 0.5 Tr(B@T)
+        """
 
         from scipy.linalg import solve_continuous_lyapunov
         T = np.zeros((self.ov, self.ov))
@@ -101,9 +110,10 @@ class rpa:
             res_norm = np.linalg.norm(R, ord='fro')
 
             M = self.A + self.B @ T
-            # solve M^T Δ + Δ M = -R
-            Delta = solve_continuous_lyapunov(M.T, -R)
-            T = T + Delta
+
+            # solve M^T dT + dT M = -R
+            dT = solve_continuous_lyapunov(M.T, -R)
+            T = T + dT
 
             current_energy = 0.5 * np.einsum('ij,ij->', self.B, T)
             delta_e = np.abs(old_energy - current_energy)
@@ -122,7 +132,4 @@ class rpa:
         print("    RPA Correlation Energy: {: 20.12f}".format(current_energy))
         print("")
 
-
-            
         return current_energy
-
