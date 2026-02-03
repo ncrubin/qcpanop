@@ -228,6 +228,25 @@ class plane_wave_basis():
 
         self.charge = cell.charge
 
+        # precompute FFT[1/|r-r'|/g2]
+        self.inv_g2 = np.zeros_like(self.g2)
+        mask = self.g2 != 0.0
+        self.inv_g2[mask] = 1.0 / self.g2[mask]
+
+        # precompute flat index in FFT grid ordering for each compact G index
+        self.flat_idx = np.empty(len(self.g), dtype=np.int64)
+        for myg in range(len(self.g)):
+            ix, iy, iz = get_miller_indices(myg, self)
+            self.flat_idx[myg] = np.ravel_multi_index((ix, iy, iz), self.real_space_grid_dim)
+
+        # precompute linear grid indices for each k-point
+        self.grid_idx_k = []
+        for kid in range ( len(self.kpts) ):
+            ijk = np.array([get_miller_indices(ik, self) for ik in self.kg_to_g[kid]])
+            coords = tuple(ijk.T)
+            self.grid_idx_k.append(np.ravel_multi_index(coords, self.real_space_grid_dim))
+
+
 
 def get_plane_waves_per_k(ke_cutoff, k, g):
 
