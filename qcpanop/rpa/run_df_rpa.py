@@ -9,15 +9,12 @@ def main():
                       H            0.000000000000     0.790689573744     0.543701060715',
                 basis='cc-pvdz')
 
-    mf = scf.RHF(mol).run()
+    mf = scf.RHF(mol).density_fit().run()
 
-    myrpa = rpa(mol, mf)
+    myrpa = rpa(mol, mf, use_df = True)
 
-    # correlation energy from solving the RPA eigenvalue problem
-    ec = myrpa.correlation_energy_from_eigensolver()
-
-    # correlation energy from solving the RPA Ricatti equation
-    ec = myrpa.ricatti_solver()
+    # correlation energy from imaginary frequency integration
+    ec = myrpa.correlation_energy()
 
 if __name__ == "__main__":
     main()
