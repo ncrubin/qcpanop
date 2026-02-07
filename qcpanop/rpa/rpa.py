@@ -297,8 +297,8 @@ class rpa:
         print("    ==> RPA Correlation Energy from 1/2 Tr(w-A) <==")
         print("")
 
-        # (A+B)(A-B)(X-Y) = E^2(X-y)
-        tmp = (self.A - self.B) @ (self.A + self.B)
+        # (A+B)(A-B)(X-Y) = E^2(X-Y)
+        tmp = (self.A + self.B) @ (self.A - self.B)
         eig, vec = np.linalg.eig(tmp)
         rpa_eig = eig**0.5
 
