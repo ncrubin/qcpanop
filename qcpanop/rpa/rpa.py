@@ -8,9 +8,98 @@ import numpy as np
 
 from pyscf import ao2mo, df, lib
 
-from openfermion.chem.molecular_data import spinorb_from_spatial
-
 from scipy.special import roots_legendre
+
+def spatial_to_spin_orbital_oei(ha, hb, n, noa, nob):
+    """
+
+    :param ha: one-electron orbitals, alpha part
+    :param hb: one-electron orbitals, beta part
+    :param n: number of spatial orbitals
+    :param noa: number of alpha occupied orbitals
+    :param nob: number of beta occupied orbitals
+    :return:  spin-orbital one-electron integrals, sh
+    """
+
+    # build spin-orbital oeis
+    sh = np.zeros((2*n,2*n))
+
+    # shape of each axis in spin-orbital basis: |oa|ob|va|vb|
+    soa = slice(None, noa)
+    sob = slice(noa, noa+nob)
+    sva = slice(noa+nob, n+nob)
+    svb = slice(n+nob, None)
+    # shape of spatial orbital axis: |oa|va| and |ob|vb|
+    oa = slice(None, noa)
+    va = slice(noa, None)
+    ob = slice(None, nob)
+    vb = slice(nob, None)
+
+    # alpha blocks
+    sh[soa, soa] = ha[oa, oa]
+    sh[sva, sva] = ha[va, va]
+    sh[sva, soa] = ha[va, oa]
+    sh[soa, sva] = ha[oa, va]
+
+    # beta blocks
+    sh[sob, sob] = hb[ob, ob]
+    sh[svb, svb] = hb[vb, vb]
+    sh[svb, sob] = hb[vb, ob]
+    sh[sob, svb] = hb[ob, vb]
+
+    return sh
+
+def spatial_to_spin_orbital_tei(gaa, gab, gbb, n, noa, nob):
+    """
+
+    :param gaa: antisymmetrized two-electron integrals in physicist' notation, alpha-alpha portion
+    :param gab: two-electron integrals in physicist' notation, alpha-beta portion
+    :param gbb: antisymmetrized two-electron integrals in physicist' notation, beta-beta portion
+    :param n: number of spatial orbitals
+    :param noa: number of alpha occupied orbitals
+    :param nob: number of beta occupied orbitals
+    :return:  spin-orbital two-electron integrals, sg
+    """
+
+    # build spin-orbital teis
+    sg = np.zeros((2*n,2*n,2*n,2*n))
+
+    # shape of each axis in spin-orbital basis: |oa|ob|va|vb|
+    soa = slice(None, noa)
+    sob = slice(noa, noa+nob)
+    sva = slice(noa+nob, n+nob)
+    svb = slice(n+nob, None)
+    # shape of spatial orbital axis: |oa|va| and |ob|vb|
+    oa  = slice(None,noa)
+    va  = slice(noa,None)
+    ob  = slice(None,nob)
+    vb  = slice(nob,None)
+
+    # populate TEI
+    def to_bin(x):
+        return '{:04b}'.format(x)
+
+    soa = (soa, sva)
+    moa = (oa, va)
+    sob = (sob, svb)
+    mob = (ob, vb)
+
+    # go from 0000 to 1111, 0 = occ slice, 1 = vir slice
+    # equivalent to looping from oooo to vvvv slice
+    for i in range(16):
+        p,q,r,s = [int(x) for x in to_bin(i)]
+        # <p,q||r,s> <- aaaa block
+        sg[soa[p], soa[q], soa[r], soa[s]] = gaa[moa[p], moa[q], moa[r], moa[s]]
+        # <p,q||r,s> <- abab block
+        sg[soa[p], sob[q], soa[r], sob[s]] =  gab[moa[p], mob[q], moa[r], mob[s]]
+        sg[sob[p], soa[q], sob[r], soa[s]] =  gab[moa[q], mob[p], moa[s], mob[r]].transpose(1,0,3,2)
+        #sg[soa[p], sob[q], sob[r], soa[s]] = -gab[moa[p], mob[q], moa[s], mob[r]].transpose(0,1,3,2)
+        #sg[sob[p], soa[q], soa[r], sob[s]] = -gab[moa[q], mob[p], moa[r], mob[s]].transpose(1,0,2,3)
+        # <p,q||r,s> <- bbbb block
+        sg[sob[p], sob[q], sob[r], sob[s]] = gbb[mob[p], mob[q], mob[r], mob[s]]
+
+    return sg
+
 
 def get_imag_freq_grid(n_points, scaling_factor=1.0):
     """
@@ -81,8 +170,9 @@ class rpa:
         K = np.einsum('pkkq->pq', tmp[:, :nocc, :nocc, :])
         f = h + 2 * J - K
 
-        f, tmp = spinorb_from_spatial(f, tmp)
         g = tmp.transpose(0, 2, 1, 3) # physicists' notation
+        f = spatial_to_spin_orbital_oei(f, f, norbs, nocc, nocc)
+        g = spatial_to_spin_orbital_tei(g, g, g, norbs, nocc, nocc)
 
         kd = np.eye(no+nv)
 
