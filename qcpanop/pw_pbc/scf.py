@@ -14,7 +14,6 @@ functional_name_dict = {
     'pbe' : ['gga_x_pbe', 'gga_c_pbe']
 } 
 
-
 import time
 import warnings
 import numpy as np
@@ -962,17 +961,21 @@ def uks(cell, basis,
     if print_level > 0:
         print('    exchange functional:                         %20s' % ( functional_name_dict[xc][0] ) )
         print('    correlation functional:                      %20s' % ( functional_name_dict[xc][1] ) )
+        print('    use pseudopotential:                         %20s' % ( "yes" if basis.use_pseudopotential is True else "no" ) )
         print('    e_convergence:                               %20.2e' % ( e_convergence ) )
         print('    d_convergence:                               %20.2e' % ( d_convergence ) )
         print('    no. k-points:                                %20i' % ( len(basis.kpts) ) )
         print('    KE cutoff (eV)                               %20.2f' % ( basis.ke_cutoff * 27.21138602 ) )
         print('    no. basis functions (orbitals, gamma point): %20i' % ( basis.n_plane_waves_per_k[0] ) )
         print('    no. basis functions (density):               %20i' % ( len(basis.g) ) )
+        print('    omega (a0^3):                                %20.2f' % ( basis.omega ) )
         print('    total_charge:                                %20i' % ( total_charge ) )
         print('    no. alpha occupied bands:                    %20i' % ( nalpha ) )
         print('    no. beta occupied bands:                     %20i' % ( nbeta ) )
         print('    no. total alpha bands:                       %20i' % ( nmo_alpha ) )
         print('    no. total beta bands:                        %20i' % ( nmo_beta ) )
+        if xc == 'hf' or jellium:
+            print('    madelung contribution to Ex:                 %20.12f' % ( -0.5 * (nalpha + nbeta) * madelung ) )
         print('    break spin symmetry:                         %20s' % ( "yes" if guess_mix is True else "no" ) )
         print('    no. diis vectors:                            %20i' % ( diis_dimension ) )
         #if kerker_q0 is not None:
@@ -1150,7 +1153,7 @@ def uks(cell, basis,
                     Fa_c += exchange_alpha
                     Fb_c += exchange_beta
                 
-                if not jellium:
+                if not jellium and basis.use_pseudopotential:
                     # TODO: don't store non-local pseudopotential in the planewave basis
                     Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
                     Vnl = Vnl + Vnl.conj().T
@@ -1194,14 +1197,13 @@ def uks(cell, basis,
 
             for kid in range ( len(basis.kpts) ):
 
-                # jellium
-                if jellium:
-                    Vnl = None
-                else:
+                if not jellium and basis.use_pseudopotential:
                     Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
                     Vnl = Vnl + Vnl.conj().T
                     diag = np.diag(Vnl)
                     np.fill_diagonal(Vnl, 0.5 * diag)
+                else:
+                    Vnl = None
 
                 def lobpcg_alpha(c):
                     return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha, adiabatic_exchange_lambda)
