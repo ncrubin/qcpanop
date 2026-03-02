@@ -448,20 +448,14 @@ def get_nonlocal_pp_energy(basis, C, N, kid, occupation_numbers):
 
     """
 
-    # oei = T + V 
-    oei = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype = 'complex128')
+    if not basis.use_pseudopotential:
+        return 0.0
 
-    if basis.use_pseudopotential:
-        oei = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
+    oei = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
 
     oei = oei + oei.conj().T
     diag = np.diag(oei)
     np.fill_diagonal(oei, 0.5 * diag)
-
-    #tmporbs = np.zeros([basis.n_plane_waves_per_k[kid], N], dtype = 'complex128')
-    #for pp in range(N):
-    #    tmporbs[:, pp] = C[:, pp] * np.sqrt(occupation_numbers[pp])
-    #nonlocal_pp_energy = np.einsum('pi,pq,qi->',tmporbs.conj(), oei, tmporbs) / len(basis.kpts)
 
     nonlocal_pp_energy = np.einsum('pi,pq,qi->',C.conj(), oei, C * occupation_numbers) / len(basis.kpts)
 
@@ -1264,7 +1258,7 @@ def uks(cell, basis,
                 one_electron_energy += np.sum(np.einsum('pi,p->i', np.abs(Cbeta[kid][:,:nmo_beta])**2 * occ_num_beta, T[kid]))
 
                 # nonlocal pseudopotential part of the energy
-                if not jellium:
+                if not jellium and basis.use_pseudopotential:
                     one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nmo_alpha, kid, occ_num_alpha)
                     one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nmo_beta, kid, occ_num_beta)
 
