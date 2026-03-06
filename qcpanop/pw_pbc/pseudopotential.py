@@ -242,43 +242,10 @@ def nonlocal_pseudopotential_on_orbitals(basis, kid, c):
     # number of atoms
     natom = len(basis.gth_params)
 
-    ## get a row of the pseudopotential matrix for this k-point
-    #Vnl = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
-    #for aa in range(basis.n_plane_waves_per_k[kid]):
-
-    #    vsg = 0.0
-
-    #    for center in range (0, natom):
-
-    #        my_h = basis.gth_params[center].hgth
-    #        my_pg = pg[center]
-
-    #        tmp_vsg = 0.0
-
-    #        for l in range(0,basis.gth_params[center].lmax):
-    #            vsgij = vsgsp = 0.0
-    #            for i in range(0,basis.gth_params[center].imax):
-    #                for j in range(0,basis.gth_params[center].imax):
-    #                    vsgij += my_pg[l, i, aa] * my_h[l, i, j] * my_pg[l,j,:]
-
-    #            for m in range(-l,l+1):
-    #                vsgsp += sphg[l,m+l, aa] * sphg[l,m+l,:].conj()
-
-    #            tmp_vsg += vsgij * vsgsp
-
-    #        # accumulate with structure factors
-    #        #vsg += tmp_vsg * SI[center][aa] * SI[center][:].conj()
-    #        vsg += tmp_vsg * basis.SI[center, gkind][aa] * basis.SI[center, gkind][:].conj()
-
-    #    Vnl[aa, :] = vsg[:] / basis.omega
-
-    # build Vnl matrix (npw, npw)
+    # number of plane waves for this k-point
     npw = basis.n_plane_waves_per_k[kid]
 
-    # V(g,g') = sum_{ij,l,m} P(l,i,g)Y(l,m,g) h(l,i,j) P(l,j,g') Y(l,m,g')
-    # Vc(g) = sum_{g') V(g,g') c(g)
-
-    Vc = np.zeros_like(c)
+    Vnl_c = np.zeros_like(c)
     for center in range(natom):
         imax = basis.gth_params[center].imax
         lmax = basis.gth_params[center].lmax
@@ -299,9 +266,9 @@ def nonlocal_pseudopotential_on_orbitals(basis, kid, c):
 
         proj_c = np.einsum('ljg,lmg,g...->lmj...', p_SI.conj(), Y.conj(), c, optimize=True)
         h_proj = np.einsum('lij,lmj...->lim...', h, proj_c)
-        Vc_update = np.einsum('lim...,lig,lmg->g...', h_proj, p_SI, Y, optimize=True)
+        Vnl_c_update = np.einsum('lim...,lig,lmg->g...', h_proj, p_SI, Y, optimize=True)
 
-        Vc += Vc_update.reshape(Vc.shape)
+        Vnl_c += Vnl_c_update.reshape(Vnl_c.shape)
 
         #proj_c = np.zeros([lmax, 2*lmax+1, imax], dtype = 'complex128')
         #for l in range(lmax):
@@ -314,10 +281,10 @@ def nonlocal_pseudopotential_on_orbitals(basis, kid, c):
         #    for m in range(2*l+1):
         #        for i in range(imax):
         #            proj = p[l, i, :] * sphg[l, m] * SI
-        #            Vc += h_proj[l, i, m] * proj.reshape(-1,1)
+        #            Vnl_c += h_proj[l, i, m] * proj.reshape(-1,1)
 
-    Vc /= basis.omega
-    return Vc
+    Vnl_c /= basis.omega
+    return Vnl_c
 
 def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
 

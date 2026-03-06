@@ -593,14 +593,11 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, xc, Ki, B_
     tmp_vphi = tmp_vphi[basis.kg_to_g[kid]] # reciprocal space, small flattened basis
     tmp_vphi = tmp_vphi.reshape(c.shape) # for lobpcg
 
-    #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
+    #F_c = T[kid] * c + tmp # eigsh
     F_c = T[kid][:, None] * c + tmp_vphi  # lobpcg
 
     if not jellium and basis.use_pseudopotential: 
         F_c += nonlocal_pseudopotential_on_orbitals(basis, kid, c)
-
-    #if Vnl is not None:
-    #    F_c += Vnl @ c # lobpcg
 
     if xc == 'hf':
         if ace_exchange :
@@ -1144,13 +1141,8 @@ def uks(cell, basis,
                 Fb_c += exchange_beta
             
             if not jellium and basis.use_pseudopotential:
-                # TODO: don't store non-local pseudopotential in the planewave basis
-                Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-                Vnl = Vnl + Vnl.conj().T
-                diag = np.diag(Vnl)
-                np.fill_diagonal(Vnl, 0.5 * diag)
-                Fa_c += Vnl @ Calpha[kid][:, :nmo_alpha]
-                Fb_c += Vnl @ Cbeta[kid][:, :nmo_beta]
+                Fa_c += nonlocal_pseudopotential_on_orbitals(basis, kid, Calpha[kid][:, :nmo_alpha])
+                Fb_c += nonlocal_pseudopotential_on_orbitals(basis, kid, Cbeta[kid][:, :nmo_beta])
 
             #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nmo_alpha] * Calpha[kid][:,:nmo_alpha]
             #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nmo_beta] * Cbeta[kid][:,:nmo_beta]
