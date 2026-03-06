@@ -561,8 +561,6 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, xc, Ki, B_
             tmp_exch = tmp_exch.reshape(c.shape) # for lobpcg
             F_c += tmp_exch
 
-    #print(np.linalg.norm(ace - tmp))
-
     return F_c
 
 def build_B_ace(ne, nmo, C, Ki, exchange):
@@ -917,7 +915,6 @@ def uks(cell, basis,
             #eps_a, ca = np.linalg.eigh(np.diag(T[kid]))
             #epsilon_alpha[kid], Calpha[kid] = eps_a[:nmo_alpha], ca[:, :nmo_alpha]
 
-            #Calpha[kid] += np.random.rand(basis.n_plane_waves_per_k[kid], nmo_alpha) * 1e-3
             Calpha[kid] = orthonormalize(Calpha[kid])
             Cbeta[kid] = Calpha[kid].copy()
 
