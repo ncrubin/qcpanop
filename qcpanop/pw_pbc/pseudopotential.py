@@ -214,6 +214,129 @@ def get_spherical_harmonics_and_projectors_gth(gv, gth_params):
 
     return spherical_harmonics_lm, projector_li, legendre
 
+#def nonlocal_pseudopotential_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbers, adiabatic_exchange_lambda):
+def nonlocal_pseudopotential_on_orbitals(basis, kid, c):
+
+    """
+
+    Evaluate action of the non-local part of the GTH pseudopotential on orbitals
+
+    :param basis: plane wave basis information
+    :param kid: index for a given k-point
+    :param c: orbitals, in reciprocal space
+
+
+    :return Vnl_c: the action of Vnl on the orbials
+
+    """
+
+    # list of indices for basis functions for this k-point
+    gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
+
+    # basis functions for this k-point
+    gk = basis.g[gkind]
+
+    # spherical harmonics and projectors in the basis of PWs for this K-point
+    sphg, pg, legg = get_spherical_harmonics_and_projectors_gth(basis.kpts[kid] + gk, basis.gth_params)
+
+    # number of atoms
+    natom = len(basis.gth_params)
+
+    ## get a row of the pseudopotential matrix for this k-point
+    #Vnl = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
+    #for aa in range(basis.n_plane_waves_per_k[kid]):
+
+    #    vsg = 0.0
+
+    #    for center in range (0, natom):
+
+    #        my_h = basis.gth_params[center].hgth
+    #        my_pg = pg[center]
+
+    #        tmp_vsg = 0.0
+
+    #        for l in range(0,basis.gth_params[center].lmax):
+    #            vsgij = vsgsp = 0.0
+    #            for i in range(0,basis.gth_params[center].imax):
+    #                for j in range(0,basis.gth_params[center].imax):
+    #                    vsgij += my_pg[l, i, aa] * my_h[l, i, j] * my_pg[l,j,:]
+
+    #            for m in range(-l,l+1):
+    #                vsgsp += sphg[l,m+l, aa] * sphg[l,m+l,:].conj()
+
+    #            tmp_vsg += vsgij * vsgsp
+
+    #        # accumulate with structure factors
+    #        #vsg += tmp_vsg * SI[center][aa] * SI[center][:].conj()
+    #        vsg += tmp_vsg * basis.SI[center, gkind][aa] * basis.SI[center, gkind][:].conj()
+
+    #    Vnl[aa, :] = vsg[:] / basis.omega
+
+    # build Vnl matrix (npw, npw)
+    npw = basis.n_plane_waves_per_k[kid]
+
+    debug = False
+    if debug:
+        Vnl = np.zeros((npw, npw), dtype=complex)
+        for center in range(natom):
+            imax = basis.gth_params[center].imax
+        
+            my_h = basis.gth_params[center].hgth[:, :imax, :imax] # lij -> (lmax, imax, imax)
+            my_pg = pg[center][:, :imax, :] # lig -> (lmax, imax, npw)
+            my_SI = basis.SI[center, gkind] # (npw,)
+        
+            center_mat = np.zeros((npw, npw), dtype=complex)
+
+            for l in range(basis.gth_params[center].lmax):
+        
+                # projector contraction  P^T H P
+                P = my_pg[l]                         # (imax, npw)
+                H = my_h[l, :, :]
+        
+                vsgij = P.T @ H @ P                  # (npw, npw)
+        
+                # spherical harmonic contraction
+                Y = sphg[l, :2*l+1]                  # (2l+1, npw)
+                vsgsp = Y.T @ Y.conj()               # (npw, npw)
+        
+                center_mat += vsgij * vsgsp
+        
+            # structure factor
+            center_mat *= np.outer(my_SI, my_SI.conj())
+        
+            Vnl += center_mat
+
+        Vnl /= basis.omega
+        return Vnl @ c
+
+    # V(g,g') = sum_{ij,l,m} P(l,i,g)Y(l,m,g) h(l,i,j) P(l,j,g') Y(l,m,g')
+    # Vc(g) = sum_{g') V(g,g') c(g)
+    else:
+        Vc = np.zeros_like(c)
+        for center in range(natom):
+            imax = basis.gth_params[center].imax
+            lmax = basis.gth_params[center].lmax
+        
+            h = basis.gth_params[center].hgth[:lmax, :imax, :imax] # lij -> (lmax, imax, imax)
+            p = pg[center][:lmax, :imax, :] # lig -> (lmax, imax, npw)
+            SI = basis.SI[center, gkind] # (npw,)
+
+            proj_c = np.zeros([lmax, 2*lmax+1, imax], dtype = 'complex128')
+            for l in range(lmax):
+                for m in range(2*l+1):
+                    for j in range(imax):
+                        proj = p[l, j, :] * sphg[l, m] * SI
+                        proj_c[l, m, j] = np.dot(proj.conj(), c)
+            h_proj = np.einsum('lij,lmj->lim', h, proj_c)
+            for l in range(lmax):
+                for m in range(2*l+1):
+                    for i in range(imax):
+                        proj = p[l, i, :] * sphg[l, m] * SI
+                        Vc += h_proj[l, i, m] * proj.reshape(-1,1)
+
+        Vc /= basis.omega
+        return Vc
+
 def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
 
     """
@@ -313,13 +436,15 @@ def get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = Fals
 
     """
 
-    get the GTH pseudopotential matrix for a given k-point
+    get the non-local part of the GTH pseudopotential matrix for a given k-point
 
     :param basis: plane wave basis information
     :param kid: index for a given k-point
     :param use_legendre: flag to indicate use of spherical harmonics sum rule
 
-    :return gth_pseudopotential: the GTH pseudopotential matrix in the plane wave basis for the orbitals, for this k-point (up to E <= ke_cutoff)
+    :return gth_pseudopotential: the non-local part of the GTH pseudopotential matrix 
+                                 in the plane wave basis for the orbitals, for this 
+                                 k-point (up to E <= ke_cutoff)
 
     """
 

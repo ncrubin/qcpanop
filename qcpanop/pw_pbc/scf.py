@@ -22,6 +22,7 @@ from scipy.sparse.linalg import LinearOperator
 
 from qcpanop.pw_pbc.pseudopotential import get_local_pseudopotential_gth
 from qcpanop.pw_pbc.pseudopotential import get_nonlocal_pseudopotential_matrix_elements
+from qcpanop.pw_pbc.pseudopotential import nonlocal_pseudopotential_on_orbitals
 
 from qcpanop.pw_pbc.basis import get_miller_indices
 
@@ -533,7 +534,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbe
 
     return F_c, Ki, exchange
 
-def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, Ki, B_ace, ace_exchange, occupation_numbers):
+def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, xc, Ki, B_ace, ace_exchange, occupation_numbers, jellium):
     """
     apply fock operator to a set of orbitals using the ace operator
 
@@ -545,12 +546,12 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
     :param C: orbitals, in reciprocal space
     :param T: diagonal of the kinetic energy matrix, in reciprocal space
     :param v_r: the potential (coulomb + local pseudopotential + xc), in real space
-    :param Vnl: matrix representation of non-local pseudopotential, in reciprocal space
     :param xc: the exchange-correlation functional
     :param Ki: exchange operator acting on orbitals, i, in reciprocal space
     :param B: ACE B matrix
     :param ace_exchange: do use the ace operator for exchange?
     :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
+    :param jellium: is this jellium? should we worry about the pseudopotential?
 
     :return F @ c: action of fock operator on the orbitals in reciprococal space
     """
@@ -595,8 +596,11 @@ def fock_on_orbitals_using_ace(basis, kid, ne, nmo, phi_r, c, T, v_r, Vnl, xc, K
     #F_c = T[kid] * c + tmp + Vnl @ c # eigsh
     F_c = T[kid][:, None] * c + tmp_vphi  # lobpcg
 
-    if Vnl is not None:
-        F_c += Vnl @ c # lobpcg
+    if not jellium and basis.use_pseudopotential: 
+        F_c += nonlocal_pseudopotential_on_orbitals(basis, kid, c)
+
+    #if Vnl is not None:
+    #    F_c += Vnl @ c # lobpcg
 
     if xc == 'hf':
         if ace_exchange :
@@ -1180,22 +1184,13 @@ def uks(cell, basis,
         rho_beta = np.zeros(basis.real_space_grid_dim, dtype = 'float64')
 
         # diagonalize fock matrix with extrapolated potential
-
         for kid in range ( len(basis.kpts) ):
 
-            if not jellium and basis.use_pseudopotential:
-                Vnl = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-                Vnl = Vnl + Vnl.conj().T
-                diag = np.diag(Vnl)
-                np.fill_diagonal(Vnl, 0.5 * diag)
-            else:
-                Vnl = None
-
             def lobpcg_alpha(c):
-                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, Vnl, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha)
+                return fock_on_orbitals_using_ace(basis, kid, nalpha, nmo_alpha, phi_alpha, c, T, v_alpha_r, xc, Ki_alpha[kid], B_alpha_ace[kid], ace_exchange, occ_num_alpha, jellium)
 
             def lobpcg_beta(c):
-                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, Vnl, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta)
+                return fock_on_orbitals_using_ace(basis, kid, nbeta, nmo_beta, phi_beta, c, T, v_beta_r, xc, Ki_beta[kid], B_beta_ace[kid], ace_exchange, occ_num_beta, jellium)
 
             Fa_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_alpha, dtype='complex128')
             Fb_C = LinearOperator((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), matvec=lobpcg_beta, dtype='complex128')
@@ -1277,7 +1272,6 @@ def uks(cell, basis,
             xc_energy = get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_functional)
 
         else :
-
             # exact exchange energy
             xc_energy = get_exact_exchange_energy(basis, phi_alpha, nmo_alpha, Calpha, occ_num_alpha)
             if nbeta > 0:
