@@ -275,67 +275,49 @@ def nonlocal_pseudopotential_on_orbitals(basis, kid, c):
     # build Vnl matrix (npw, npw)
     npw = basis.n_plane_waves_per_k[kid]
 
-    debug = False
-    if debug:
-        Vnl = np.zeros((npw, npw), dtype=complex)
-        for center in range(natom):
-            imax = basis.gth_params[center].imax
-        
-            my_h = basis.gth_params[center].hgth[:, :imax, :imax] # lij -> (lmax, imax, imax)
-            my_pg = pg[center][:, :imax, :] # lig -> (lmax, imax, npw)
-            my_SI = basis.SI[center, gkind] # (npw,)
-        
-            center_mat = np.zeros((npw, npw), dtype=complex)
-
-            for l in range(basis.gth_params[center].lmax):
-        
-                # projector contraction  P^T H P
-                P = my_pg[l]                         # (imax, npw)
-                H = my_h[l, :, :]
-        
-                vsgij = P.T @ H @ P                  # (npw, npw)
-        
-                # spherical harmonic contraction
-                Y = sphg[l, :2*l+1]                  # (2l+1, npw)
-                vsgsp = Y.T @ Y.conj()               # (npw, npw)
-        
-                center_mat += vsgij * vsgsp
-        
-            # structure factor
-            center_mat *= np.outer(my_SI, my_SI.conj())
-        
-            Vnl += center_mat
-
-        Vnl /= basis.omega
-        return Vnl @ c
-
     # V(g,g') = sum_{ij,l,m} P(l,i,g)Y(l,m,g) h(l,i,j) P(l,j,g') Y(l,m,g')
     # Vc(g) = sum_{g') V(g,g') c(g)
-    else:
-        Vc = np.zeros_like(c)
-        for center in range(natom):
-            imax = basis.gth_params[center].imax
-            lmax = basis.gth_params[center].lmax
-        
-            h = basis.gth_params[center].hgth[:lmax, :imax, :imax] # lij -> (lmax, imax, imax)
-            p = pg[center][:lmax, :imax, :] # lig -> (lmax, imax, npw)
-            SI = basis.SI[center, gkind] # (npw,)
 
-            proj_c = np.zeros([lmax, 2*lmax+1, imax], dtype = 'complex128')
-            for l in range(lmax):
-                for m in range(2*l+1):
-                    for j in range(imax):
-                        proj = p[l, j, :] * sphg[l, m] * SI
-                        proj_c[l, m, j] = np.dot(proj.conj(), c)
-            h_proj = np.einsum('lij,lmj->lim', h, proj_c)
-            for l in range(lmax):
-                for m in range(2*l+1):
-                    for i in range(imax):
-                        proj = p[l, i, :] * sphg[l, m] * SI
-                        Vc += h_proj[l, i, m] * proj.reshape(-1,1)
+    Vc = np.zeros_like(c)
+    for center in range(natom):
+        imax = basis.gth_params[center].imax
+        lmax = basis.gth_params[center].lmax
+    
+        h = basis.gth_params[center].hgth[:lmax, :imax, :imax] # lij -> (lmax, imax, imax)
+        p = pg[center][:lmax, :imax, :] # lig -> (lmax, imax, npw)
+        SI = basis.SI[center, gkind] # (npw,)
 
-        Vc /= basis.omega
-        return Vc
+        # pre-multiply p and SI
+        p_SI = p * SI[None, None, :]
+
+        # subset of spherical harmonics container
+        sphg_subset = sphg[:lmax, :2*lmax+1, :]
+        mask = np.zeros((lmax, 2*lmax+1, 1), dtype=int)
+        for l in range (lmax):
+            mask[l, :2*l+1, 0] = 1
+        Y = mask * sphg_subset
+
+        proj_c = np.einsum('ljg,lmg,g...->lmj...', p_SI.conj(), Y.conj(), c, optimize=True)
+        h_proj = np.einsum('lij,lmj...->lim...', h, proj_c)
+        Vc_update = np.einsum('lim...,lig,lmg->g...', h_proj, p_SI, Y, optimize=True)
+
+        Vc += Vc_update.reshape(Vc.shape)
+
+        #proj_c = np.zeros([lmax, 2*lmax+1, imax], dtype = 'complex128')
+        #for l in range(lmax):
+        #    for m in range(2*l+1):
+        #        for j in range(imax):
+        #            proj = p[l, j, :] * sphg[l, m] * SI
+        #            proj_c[l, m, j] = np.dot(proj.conj(), c)
+        #h_proj = np.einsum('lij,lmj->lim', h, proj_c)
+        #for l in range(lmax):
+        #    for m in range(2*l+1):
+        #        for i in range(imax):
+        #            proj = p[l, i, :] * sphg[l, m] * SI
+        #            Vc += h_proj[l, i, m] * proj.reshape(-1,1)
+
+    Vc /= basis.omega
+    return Vc
 
 def get_nonlocal_pseudopotential_gth(SI, sphg, pg, gind, gth_params, omega):
 
