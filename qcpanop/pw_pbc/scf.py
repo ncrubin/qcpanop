@@ -433,36 +433,6 @@ def get_density(basis, C, Ne, Nmo, kid, occupation_numbers):
 
     return ( 1.0 / len(basis.kpts) ) * rho, phi_r
 
-# TODO: eliminate npw x npw storage
-def get_nonlocal_pp_energy(basis, C, N, kid, occupation_numbers):
-    """
-
-    get nonlocal pseudopotential part of the energy
-
-    :param basis: plane wave basis information
-    :param C: molecular orbital coefficients
-    :param N: the number of orbitals (formerly number of electrons, prior to smearing)
-    :param kid: index for a given k-point
-    :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
-
-    :return one_electron_energy: the nonlocal pseudopotential part of the energy
-
-    """
-
-    if not basis.use_pseudopotential:
-        return 0.0
-
-    oei = get_nonlocal_pseudopotential_matrix_elements(basis, kid, use_legendre = basis.nl_pp_use_legendre)
-
-    oei = oei + oei.conj().T
-    diag = np.diag(oei)
-    np.fill_diagonal(oei, 0.5 * diag)
-
-    nonlocal_pp_energy = np.einsum('pi,pq,qi->',C.conj(), oei, C * occupation_numbers) / len(basis.kpts)
-
-    return nonlocal_pp_energy
-
-# TODO: use real-space representation of non-local pseudopotential here
 def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbers):
     """
     evaluate action of fock matrix on orbitals and build ace operator
@@ -1238,8 +1208,12 @@ def uks(cell, basis,
 
             # nonlocal pseudopotential part of the energy
             if not jellium and basis.use_pseudopotential:
-                one_electron_energy += get_nonlocal_pp_energy(basis, Calpha[kid], nmo_alpha, kid, occ_num_alpha)
-                one_electron_energy += get_nonlocal_pp_energy(basis, Cbeta[kid], nmo_beta, kid, occ_num_beta)
+
+                Vnl_c = nonlocal_pseudopotential_on_orbitals(basis, kid, Calpha[kid][:, :nmo_alpha])
+                one_electron_energy += np.dot(Calpha[kid][:, :nmo_alpha].conj().flatten(), Vnl_c.flatten())
+
+                Vnl_c = nonlocal_pseudopotential_on_orbitals(basis, kid, Calpha[kid][:, :nmo_alpha])
+                one_electron_energy += np.dot(Cbeta[kid][:, :nmo_beta].conj().flatten(), Vnl_c.flatten())
 
         # nuclear potential / local pseudopotential part of the one-electron energy
         if not jellium:
