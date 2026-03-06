@@ -339,38 +339,6 @@ def get_xc_energy(xc, basis, rho_alpha, rho_beta, libxc_x_functional, libxc_c_fu
 
     return xc_energy
 
-# TODO: we won't need this function once storage of non-local pseudopotential matrix is eliminated
-def get_matrix_elements(basis, kid, vg):
-
-    """
-
-    unpack the potential matrix for given k-point: <G'|V|G''> = V(G'-G'')
-
-    :param basis: plane wave basis information
-    :param kid: index for a given k-point
-    :param vg: full potential container in the plane wave basis for the density (up to E <= 2 x ke_cutoff)
-    :return potential: the pseudopotential matrix in the plane wave basis for the orbitals, for this k-point (up to E <= ke_cutoff)
-
-    """
-
-    potential = np.zeros((basis.n_plane_waves_per_k[kid], basis.n_plane_waves_per_k[kid]), dtype='complex128')
-
-    gkind = basis.kg_to_g[kid, :basis.n_plane_waves_per_k[kid]]
-
-    for aa in range(basis.n_plane_waves_per_k[kid]):
-
-        ik = basis.kg_to_g[kid][aa]
-        gdiff = basis.miller[ik] - basis.miller[gkind[aa:]] + np.array(basis.reciprocal_max_dim)
-        #inds = basis.miller_to_g[gdiff.T.tolist()]
-        # inds = basis.miller_to_g[tuple(gdiff.T.tolist())]
-        inds = basis.miller_to_g[gdiff[:, 0], 
-                                 gdiff[:, 1],
-                                 gdiff[:, 2]]
-
-        potential[aa, aa:] = vg[inds]
-
-    return potential
-
 def get_nuclear_electronic_potential(cell, basis, valence_charges = None):
 
     """
@@ -433,7 +401,7 @@ def get_density(basis, C, Ne, Nmo, kid, occupation_numbers):
 
     return ( 1.0 / len(basis.kpts) ) * rho, phi_r
 
-def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbers):
+def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbers, jellium):
     """
     evaluate action of fock matrix on orbitals and build ace operator
 
@@ -447,7 +415,7 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbe
     :param v_r: the potential (coulomb + local pseudopotential + xc), in real space
     :param xc: the exchange-correlation functional
     :param occupation_numbers: a list of occupation numbers (0, 1, or fermi-dirac for smearing)
-
+    :param jellium: is this jellium? should we worry about the pseudopotential?
 
     :return F_c: the action of the fock matrix on the orbials
     :return Ki: exchange operator acting on orbitals, i, in reciprocal space
@@ -501,6 +469,9 @@ def fock_on_orbitals(basis, kid, ne, nmo, phi_r, C, T, v_r, xc, occupation_numbe
         tmp_exch = np.fft.ifftn(tmp_exch) # reciprocal space, 3d
         tmp_exch = tmp_exch.ravel()[basis.flat_idx] # reciprocal space, large flattened basis
         exchange[:,i] = tmp_exch[basis.kg_to_g[kid]] # map last term to small flattened basis
+
+    if not jellium and basis.use_pseudopotential: 
+        F_c += nonlocal_pseudopotential_on_orbitals(basis, kid, C[kid])
 
     return F_c, Ki, exchange
 
@@ -889,7 +860,6 @@ def uks(cell, basis,
     madelung = tools.pbc.madelung(cell, basis.kpts)
 
     nalpha, nbeta = cell.nelec
-    #nbeta, nalpha = cell.nelec
     total_charge = cell.charge
 
     # jellium
@@ -900,8 +870,8 @@ def uks(cell, basis,
         enuc = 0.0
 
     # nmo ... number of desired molecular orbitals ... must be at least ne
-    nmo_alpha = nalpha #+ 1
-    nmo_beta = nbeta #+ 1
+    nmo_alpha = nalpha
+    nmo_beta = nbeta
     #if guess_mix:
     #    nmo_alpha += 1
     #    nmo_beta += 1
@@ -1095,12 +1065,13 @@ def uks(cell, basis,
 
             # compute local potentials
             v_coulomb, v_alpha_r, v_beta_r = compute_local_potentials(rho_alpha, rho_beta, v_ne, basis, xc, libxc_x_functional, libxc_c_functional, jellium)
+
         # evaluate the orbital gradient
         error_vector = np.zeros(0)
         for kid in range( len(basis.kpts) ):
 
-            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, xc, occ_num_alpha)
-            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, xc, occ_num_beta)
+            Fa_c, Ki_alpha[kid], exchange_alpha = fock_on_orbitals(basis, kid, nalpha, nmo_alpha, phi_alpha, Calpha, T, v_alpha_r, xc, occ_num_alpha, jellium)
+            Fb_c, Ki_beta[kid], exchange_beta = fock_on_orbitals(basis, kid, nbeta, nmo_beta, phi_beta, Cbeta, T, v_beta_r, xc, occ_num_beta, jellium)
 
             if xc == 'hf':
 
@@ -1110,10 +1081,6 @@ def uks(cell, basis,
                 Fa_c += exchange_alpha
                 Fb_c += exchange_beta
             
-            if not jellium and basis.use_pseudopotential:
-                Fa_c += nonlocal_pseudopotential_on_orbitals(basis, kid, Calpha[kid][:, :nmo_alpha])
-                Fb_c += nonlocal_pseudopotential_on_orbitals(basis, kid, Cbeta[kid][:, :nmo_beta])
-
             #grad_a = Fa_c - epsilon_alpha[kid][np.newaxis, :nmo_alpha] * Calpha[kid][:,:nmo_alpha]
             #grad_b = Fb_c - epsilon_beta[kid][np.newaxis, :nmo_beta] * Cbeta[kid][:,:nmo_beta]
 
